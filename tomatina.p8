@@ -11,6 +11,11 @@ cam_x   = 0
 game_state = "play"
 score = 0
 wobble = 0
+crowd_cd = 0
+level = 1
+level_cd = 0
+npc_spd_g = 0.7
+npc_cd_g = 90
 
 entities = {}
 
@@ -20,9 +25,11 @@ pl = {
   hx=-3, hy=-15, hw=7, hh=15,
   ammo=12, hp=5,
   jsy=0, jvy=0, jump_cd=0,
+  boots=0, mask_cd=0, poncho=0, racket=0, umbrella=0,
 }
 
 local function on_pud(e)
+  if e==pl and pl.boots>0 then return false end
   if (e.jsy or 0)<0 then return false end
   for _,t in ipairs(entities) do
     if t.kind=="puddle" and abs(e.x-t.x)<t.sz+2 and abs(e.y-t.y)<3 then
@@ -41,7 +48,7 @@ local function pl_input(e)
   e.x+=dx*e.spd  e.y+=dy*e.spd
   if dx>0 then e.dir=1 elseif dx<0 then e.dir=-1 end
   e.y=mid(e.y,gnd_top,gnd_bot)
-  e.x=mid(e.x,8,1016)
+  e.x=mid(e.x,8,1050)
   return dx!=0 or dy!=0
 end
 
@@ -70,7 +77,7 @@ pl.slip = function(e)
   local dur=(e.slip_type==3) and 65 or (e.slip_type==2) and 55 or 40
   e.x+=e.slip_vx
   e.slip_vx*=0.85
-  e.x=mid(e.x,8,1016)
+  e.x=mid(e.x,8,1050)
   if btnp(5) then e.timer+=8 end
   if e.timer>dur then e.state="idle" e.timer=0 end
 end
@@ -176,7 +183,33 @@ function npc_throw(src)
       e.sy+=e.vy
       e.vy+=e.vy<0 and 0.15 or 0.5
       if abs(e.x-pl.x)<7 and abs(e.y+e.sy-pl.y)<12 then
-        pl.hp=max(0,pl.hp-1)
+        if pl.racket>0 then
+          pl.racket-=1
+          local best,bd=nil,999
+          for _,t in ipairs(entities) do
+            if t.kind=="npc" and t.state!="down" then
+              local d=abs(pl.x-t.x)
+              if d<bd then best=t bd=d end
+            end
+          end
+          if best then
+            local od=pl.dir pl.dir=best.x>pl.x and 1 or -1
+            pl.ammo+=1 throw_tomato(pl) pl.dir=od
+          end
+          spawn_floater(pl.x,pl.y-18,"deflected!",10)
+        elseif pl.poncho>0 then
+          pl.poncho-=1
+          spawn_floater(pl.x,pl.y-18,"blocked!",11)
+        elseif pl.umbrella>0 then
+          if pl.umbrella%2==0 then
+            spawn_floater(pl.x,pl.y-18,"blocked!",11)
+          else
+            pl.hp=max(0,pl.hp-1)
+          end
+          pl.umbrella-=1
+        else
+          pl.hp=max(0,pl.hp-1)
+        end
         e.dead=true return
       end
       if e.x<cam_x-20 or e.x>cam_x+148 then e.dead=true return end
@@ -210,6 +243,133 @@ function overlaps(a,b)
      and a.y+a.hy+a.hh > b.y+b.hy
 end
 
+function crowd_throw()
+  local sx=cam_x+64
+  local bias=(rnd(10)<6) and flr(rnd(220)) or -flr(rnd(150))
+  local tx=mid(sx+bias,30,1550)
+  local r=flr(rnd(10))
+  local it=r<2 and 0 or r<3 and 1 or r<4 and 2 or r<5 and 3 or r<6 and 4 or r<7 and 5 or r<8 and 6 or 7
+  local nm={"bikini top!","fan scarf!","boots!","scuba mask!","poncho!","padel!","umbrella!","gooool!"}
+  local ic={14,8,4,1,11,5,12,7}
+  spawn({
+    x=sx,y=110,sy=0,
+    vx=(tx-sx)/40,vy=-3.5,
+    itype=it,iname=nm[it+1],icol=ic[it+1],
+    state="fly",timer=0,
+    fly=function(e)
+      e.x+=e.vx e.y+=e.vy e.vy+=0.15
+      if e.vy>0 and e.y>=gnd_top and e.y<=gnd_bot then
+        e.y=mid(e.y,gnd_top,gnd_bot)
+        e.vx=0 e.state="idle" e.timer=0
+      end
+      if e.timer>150 or e.y>120 then e.dead=true end
+    end,
+    idle=function(e)
+      if abs(pl.x-e.x)<6 and abs(pl.y-e.y)<5 then
+        if e.itype==7 then
+          local best,bd=nil,999
+          for _,t in ipairs(entities) do
+            if t.kind=="npc" and t.state!="down" then
+              local d=abs(e.x-t.x)
+              if d<bd then best=t bd=d end
+            end
+          end
+          if best then
+            e.vx=sgn(best.x-e.x)*1.5 e.bounces=0
+            e.state="kick" e.timer=0
+            spawn_floater(e.x,e.y-10,"gooool!",10)
+          else e.dead=true end
+        else
+          if e.itype==2 then pl.boots=1200
+          elseif e.itype==3 then pl.mask_cd=300
+          elseif e.itype==4 then pl.poncho=3
+          elseif e.itype==5 then pl.racket=3
+          elseif e.itype==6 then pl.umbrella=6
+          end
+          spawn_floater(e.x,e.y-8,e.iname,e.icol)
+          e.dead=true
+        end
+      end
+    end,
+    kick=function(e)
+      e.x+=e.vx
+      e.sy=-flr(abs(sin(e.timer*0.1))*4)
+      for _,t in ipairs(entities) do
+        if t.kind=="npc" and t.state!="down" and t.state!="hit" then
+          if abs(e.x-t.x)<8 then
+            t.state="down" t.hp=0 t.timer=0
+            e.bounces+=1
+            if e.bounces>=6 then e.dead=true return end
+            local best,bd=nil,999
+            for _,n in ipairs(entities) do
+              if n.kind=="npc" and n!=t and n.state!="down" then
+                local d=abs(e.x-n.x)
+                if d>5 and d<bd then best=n bd=d end
+              end
+            end
+            if best then
+              e.vx=sgn(best.x-e.x)*1.5 e.timer=0
+            else e.dead=true end
+            return
+          end
+        end
+      end
+      if e.timer>120 then e.dead=true end
+    end,
+    draw=function(e)
+      local c=e.icol
+      if e.state=="fly" then
+        if e.timer%8<4 then rectfill(e.x-2,e.y-3,e.x+2,e.y,c)
+        else rectfill(e.x-3,e.y-1,e.x+3,e.y+1,c) end
+      elseif e.state=="kick" then
+        ovalfill(e.x-3,e.y,e.x+3,e.y+1,5)
+        local by=e.y+e.sy
+        circfill(e.x,by,3,7)
+        pset(e.x,by,0)
+        pset(e.x-2,by-2,0) pset(e.x+2,by-2,0)
+        pset(e.x-1,by+2,0) pset(e.x+1,by+2,0)
+      else
+        local fc=e.timer%6<3 and c or 7
+        if e.itype==0 then
+          pset(e.x-3,e.y-3,fc) pset(e.x-2,e.y-4,fc)
+          rectfill(e.x-4,e.y-2,e.x-1,e.y,fc)
+          pset(e.x,e.y-1,fc)
+          pset(e.x+2,e.y-3,fc) pset(e.x+3,e.y-4,fc)
+          rectfill(e.x+1,e.y-2,e.x+4,e.y,fc)
+        elseif e.itype==1 then
+          rectfill(e.x-4,e.y-1,e.x+4,e.y,fc)
+          rectfill(e.x-4,e.y-3,e.x-3,e.y-1,fc)
+          rectfill(e.x+3,e.y-3,e.x+4,e.y-1,fc)
+          pset(e.x-1,e.y-1,10) pset(e.x+1,e.y-1,10)
+        elseif e.itype==2 then
+          rectfill(e.x-4,e.y-5,e.x-2,e.y,fc)
+          rectfill(e.x-5,e.y-1,e.x-1,e.y,fc)
+          rectfill(e.x+1,e.y-5,e.x+3,e.y,fc)
+          rectfill(e.x+1,e.y-1,e.x+5,e.y,fc)
+        elseif e.itype==3 then
+          ovalfill(e.x-4,e.y-3,e.x+4,e.y+1,fc)
+          ovalfill(e.x-3,e.y-2,e.x+3,e.y,1)
+        elseif e.itype==4 then
+          rectfill(e.x-4,e.y-3,e.x+4,e.y,fc)
+          rectfill(e.x-2,e.y-5,e.x+2,e.y-3,fc)
+          pset(e.x,e.y-4,7)
+        elseif e.itype==5 then
+          ovalfill(e.x-3,e.y-4,e.x+3,e.y,fc)
+          line(e.x+2,e.y,e.x+5,e.y+3,4)
+        elseif e.itype==6 then
+          ovalfill(e.x-5,e.y-4,e.x+5,e.y-1,fc)
+          line(e.x,e.y-1,e.x,e.y+2,5)
+        else
+          circfill(e.x,e.y-2,3,7)
+          pset(e.x,e.y-2,0)
+          pset(e.x-2,e.y-4,0) pset(e.x+2,e.y-4,0)
+          pset(e.x-1,e.y,0) pset(e.x+1,e.y,0)
+        end
+      end
+    end,
+  })
+end
+
 function spawn_floater(px,py,txt,col)
   spawn({
     x=px,y=py,kind="floater",ftxt=txt,fcol=col,
@@ -239,7 +399,7 @@ function spawn_food(px,py,kind)
       if abs(pl.x-e.x)<7 and abs(pl.y-e.y)<5 then
         pl.hp=min(5,pl.hp+e.fheal)
         if e.fkind==2 then wobble=20 end
-        local nm={"patatas!","bocadillo!","cerveza!"}
+        local nm={"bravas!","bocadillo!","cerveza!"}
         local nc={10,15,10}
         spawn_floater(e.x,e.y-8,nm[e.fkind+1],nc[e.fkind+1])
         e.dead=true
@@ -307,21 +467,34 @@ function draw_puddles()
   end
 end
 
+function npc_slip(e)
+  e.x+=(e.slip_vx or 0)
+  if e.slip_vx then e.slip_vx*=0.85 end
+  e.x=mid(e.x,8,1050)
+  if e.timer>38 then e.state="wander" e.timer=0 end
+end
+
 function npc_wander(e)
+  if on_pud(e) then
+    e.state="slip" e.timer=0
+    e.slip_vx=(flr(rnd(2))==0 and e.dir or -e.dir)*2.5
+    return
+  end
   local dx=pl.x-e.x  local dy=pl.y-e.y
   e.dir=dx>0 and 1 or -1
   if abs(dx)>10 then
     e.x+=e.dir*e.spd
-    e.y+=mid(dy,-0.4,0.4)
+    e.y+=mid((e.ty or e.y)-e.y,-0.4,0.4)
     e.y=mid(e.y,gnd_top,gnd_bot)
   end
   e.cooldown=max(0,e.cooldown-1)
-  if abs(dx)<80 and abs(dy)<18 and e.cooldown==0 then
+  if abs(dx)<80 and abs(dy)<18 and e.cooldown==0 and pl.mask_cd<=0 then
     e.state="throw" e.timer=0
   end
 end
 
 function npc_throw_st(e)
+  if pl.mask_cd>0 then e.state="wander" e.timer=0 return end
   if e.timer==20 then
     npc_throw(e)
     e.cooldown=90+flr(rnd(60))
@@ -353,6 +526,11 @@ function npc_draw(e)
     rectfill(e.x-7,e.y-flr(3+prog*12),e.x+7,e.y,8)
     return
   end
+  if e.state=="slip" then
+    rectfill(e.x-9,e.y-4,e.x+9,e.y,8)
+    circfill(e.x+e.dir*8,e.y-5,3,9)
+    return
+  end
   local flash=(e.state=="hit" and e.timer%4<2)
   local fr=(e.state=="wander") and flr(time()*7)%2 or 0
   rectfill(e.x-3,e.y-1,e.x+3,e.y,5)
@@ -369,11 +547,12 @@ end
 
 function spawn_npc(px,py)
   spawn({
-    x=px,y=py,dir=1,spd=0.7,
+    x=px,y=py,ty=py,dir=1,spd=npc_spd_g,
     state="wander",timer=0,
-    hp=2,cooldown=90+flr(rnd(90)),kind="npc",
+    hp=2,cooldown=npc_cd_g+flr(rnd(npc_cd_g)),kind="npc",
     hx=-3,hy=-14,hw=6,hh=14,
     wander=npc_wander,
+    slip=npc_slip,
     throw=npc_throw_st,
     hit=npc_hit,
     down=npc_down,
@@ -413,11 +592,16 @@ function _init()
   cam_x=0
   game_state="play"
   score=0
+  level=1
   pl.x=64  pl.y=90  pl.dir=1
   pl.state="idle"  pl.timer=0
   pl.ammo=12  pl.hp=5
   pl.jsy=0  pl.jvy=0  pl.jump_cd=0
+  pl.boots=0  pl.mask_cd=0  pl.poncho=0  pl.racket=0  pl.umbrella=0
   wobble=0
+  crowd_cd=150+flr(rnd(150))
+  npc_spd_g=0.7
+  npc_cd_g=90
   srand(99)
   for i=1,40 do
     local px=100+flr(rnd(1400))
@@ -440,20 +624,64 @@ function _init()
   srand(time())
 end
 
+function level_up_init()
+  entities={}  cam_x=0  game_state="play"
+  pl.x=64  pl.y=90  pl.dir=1
+  pl.state="idle"  pl.timer=0
+  pl.jsy=0  pl.jvy=0  pl.jump_cd=0
+  wobble=0  crowd_cd=150+flr(rnd(150))
+  local nc=min(8+(level-1)*2,18)
+  npc_spd_g=min(0.7+(level-1)*0.08,1.3)
+  npc_cd_g=max(90-(level-1)*10,30)
+  srand(99+level*7)
+  for i=1,40 do spawn_pickup(100+flr(rnd(1400)),gnd_top+2+flr(rnd(gnd_bot-gnd_top-4))) end
+  srand(77+level*13)
+  for i=1,nc do spawn_npc(200+flr(rnd(1200)),gnd_top+2+flr(rnd(gnd_bot-gnd_top-4))) end
+  srand(55+level*11)
+  for i=1,15 do
+    local r=flr(rnd(10))
+    spawn_food(150+flr(rnd(1300)),gnd_top+2+flr(rnd(gnd_bot-gnd_top-4)),r<4 and 0 or r<8 and 1 or 2)
+  end
+  srand(time())
+end
+
+function draw_level_up()
+  rectfill(24,48,103,80,0)
+  rect(25,49,102,79,9)
+  local lbl="nivel "..level
+  print(lbl,64-#lbl*2,57,9)
+  print("buena suerte!",28,68,7)
+end
+
 function _update()
   if game_state=="over" then
     if btnp(4) or btnp(5) then _init() end
     return
   end
+  if game_state=="level_up" then
+    level_cd-=1
+    if level_cd<=0 then level_up_init() end
+    return
+  end
   score+=1
+  crowd_cd-=1
+  if crowd_cd<=0 then crowd_throw() crowd_cd=180+flr(rnd(120)) end
   wobble=max(0,wobble-1)
+  if pl.mask_cd>0 then pl.mask_cd-=1 end
+  if pl.boots>0 then pl.boots-=1 end
   update_entities()
   camera_scroll()
+  if pl.x>1040 then
+    level+=1
+    game_state="level_up"
+    level_cd=120
+    return
+  end
   if pl.hp<=0 then game_state="over" end
 end
 
 function camera_scroll()
-  cam_x=max(pl.x-64,0)
+  cam_x=mid(pl.x-64,0,900)
 end
 
 function _draw()
@@ -466,6 +694,7 @@ function _draw()
   camera(0,0)
   draw_hud()
   if game_state=="over" then draw_gameover() end
+  if game_state=="level_up" then draw_level_up() end
 end
 
 function draw_bg()
@@ -600,6 +829,7 @@ function draw_buildings()
   srand(31)
   local x=0
   while x<1600 do
+    if x>=950 then break end
     local bw =20+flr(rnd(28))
     local bh =16+flr(rnd(20))
     local bc =wcs[1+flr(rnd(6))]
@@ -685,6 +915,9 @@ function draw_castle()
   rectfill(bx-26,50,bx+14,55,4)
 end
 
+function draw_exit()
+end
+
 function draw_ground_perspective()
   local spx,spy = 16,0
   local tw,th   = 8,8
@@ -716,6 +949,12 @@ function draw_hud()
   for i=0,pl.ammo-1 do
     circfill(4+(i%6)*6,2+flr(i/6)*5,2,8)
   end
+  local gx=125
+  if pl.umbrella>0 then circfill(gx,4,3,12) print(pl.umbrella,gx-1,0,0) gx-=8 end
+  if pl.racket>0 then circfill(gx,4,3,5) print(pl.racket,gx-1,0,7) gx-=8 end
+  if pl.poncho>0 then circfill(gx,4,3,11) print(pl.poncho,gx-1,0,7) gx-=8 end
+  if pl.mask_cd>0 then circfill(gx,4,3,1) gx-=8 end
+  if pl.boots>0 then circfill(gx,4,3,4) end
 end
 
 __gfx__
