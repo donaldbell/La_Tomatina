@@ -3,12 +3,12 @@ version 43
 __lua__
 
 -- tomatina
--- phase 1c: layered background
+-- tab 0: globals
 
 gnd_top = 82
 gnd_bot = 105
 cam_x   = 0
-game_state = "play"
+game_state = "title"
 score = 0
 wobble = 0
 crowd_cd = 0
@@ -18,8 +18,29 @@ npc_spd_g = 0.7
 npc_cd_g = 90
 over_music_pending = false
 over_music_start_pat = -1
+title_cam = -128
+title_timer = 0
+title_flash_t = 0
+title_fly = {}
+title_pile = {}
+pile_ht = {}
+title_top_edge = {}
+title_spawn_cd = 60
 
 entities = {}
+
+function on_pud(e)
+  if e==pl and pl.boots>0 then return false end
+  if (e.jsy or 0)<0 then return false end
+  for _,t in ipairs(entities) do
+    if t.kind=="puddle" and abs(e.x-t.x)<t.sz+2 and abs(e.y-t.y)<3 then
+      return true
+    end
+  end
+end
+
+-->8
+-- tab 1: player
 
 pl = {
   x=64, y=90, dir=1, spd=2.0,
@@ -30,16 +51,6 @@ pl = {
   boots=0, mask_cd=0, poncho=0, racket=0, umbrella=0,
   throw_cd=0, scarf_cd=0, bikini_cd=0,
 }
-
-local function on_pud(e)
-  if e==pl and pl.boots>0 then return false end
-  if (e.jsy or 0)<0 then return false end
-  for _,t in ipairs(entities) do
-    if t.kind=="puddle" and abs(e.x-t.x)<t.sz+2 and abs(e.y-t.y)<3 then
-      return true
-    end
-  end
-end
 
 local function pl_input(e)
   local dx,dy=0,0
@@ -128,6 +139,100 @@ pl.draw = function(e)
   if e.umbrella>0  then spr(12,x,y,1,1,fl) end
   if e.racket>0    then spr(13,x,y,1,1,fl) end
 end
+
+-->8
+-- tab 2: npcs
+
+function npc_slip(e)
+  e.x+=(e.slip_vx or 0)
+  if e.slip_vx then e.slip_vx*=0.85 end
+  e.x=mid(e.x,8,1050)
+  if e.timer>38 then e.state="wander" e.timer=0 end
+end
+
+function npc_wander(e)
+  if on_pud(e) then
+    e.state="slip" e.timer=0
+    e.slip_vx=(flr(rnd(2))==0 and e.dir or -e.dir)*2.5
+    return
+  end
+  local dx=pl.x-e.x  local dy=pl.y-e.y
+  e.dir=dx>0 and 1 or -1
+  if abs(dx)>10 then
+    e.x+=e.dir*e.spd
+    e.y+=mid((e.ty or e.y)-e.y,-0.4,0.4)
+    e.y=mid(e.y,gnd_top,gnd_bot)
+  end
+  e.cooldown=max(0,e.cooldown-1)
+  if abs(dx)<80 and abs(dy)<18 and e.cooldown==0 and pl.mask_cd<=0 then
+    e.state="throw" e.timer=0
+  end
+end
+
+function npc_throw_st(e)
+  if pl.mask_cd>0 then e.state="wander" e.timer=0 return end
+  if e.timer==20 then
+    npc_throw(e)
+    e.cooldown=90+flr(rnd(60))
+  end
+  if e.timer>35 then e.state="wander" e.timer=0 end
+end
+
+function npc_hit(e)
+  if e.timer>20 then e.state="wander" e.timer=0 end
+end
+
+function npc_down(e)
+  if e.timer==0 then
+    sfx(1)
+    for i=1,1+flr(rnd(2)) do
+      spawn_pickup(e.x+flr(rnd(14))-7,e.y)
+    end
+  end
+  if e.timer>120 then e.state="getup" e.timer=0 end
+end
+
+function npc_getup(e)
+  if e.timer>20 then e.state="wander" e.timer=0 e.hp=2 end
+end
+
+function npc_draw(e)
+  local x=e.x-4  local y=e.y-15
+  if e.state=="down" or e.state=="getup" then
+    local prog=(e.state=="getup") and min(e.timer/20,1) or 0
+    rectfill(e.x-7,e.y-flr(3+prog*12),e.x+7,e.y,8)
+    return
+  end
+  if e.state=="slip" then
+    spr(6,e.x-8,e.y-7,2,1,e.dir<0)
+    return
+  end
+  local flash=(e.state=="hit" and e.timer%4<2)
+  local fr=(e.state=="wander") and flr(time()*7)%2 or 0
+  local fl=e.dir<0
+  if flash then for i=0,15 do pal(i,7) end end
+  spr(4+fr,x,y,1,2,fl)
+  pal()
+end
+
+function spawn_npc(px,py)
+  spawn({
+    x=px,y=py,ty=py,dir=1,spd=npc_spd_g,
+    state="wander",timer=0,
+    hp=2,cooldown=npc_cd_g+flr(rnd(npc_cd_g)),kind="npc",
+    hx=-3,hy=-14,hw=6,hh=14,
+    wander=npc_wander,
+    slip=npc_slip,
+    throw=npc_throw_st,
+    hit=npc_hit,
+    down=npc_down,
+    getup=npc_getup,
+    draw=npc_draw,
+  })
+end
+
+-->8
+-- tab 3: projectiles
 
 function throw_tomato(src)
   src.ammo-=1
@@ -231,19 +336,6 @@ function npc_throw(src)
       end
     end,
   })
-end
-
-function spawn(t)
-  t.timer=t.timer or 0
-  entities[#entities+1]=t
-  return t
-end
-
-function overlaps(a,b)
-  return a.x+a.hx     < b.x+b.hx+b.hw
-     and a.x+a.hx+a.hw > b.x+b.hx
-     and a.y+a.hy     < b.y+b.hy+b.hh
-     and a.y+a.hy+a.hh > b.y+b.hy
 end
 
 function crowd_throw()
@@ -376,6 +468,9 @@ function crowd_throw()
   })
 end
 
+-->8
+-- tab 4: pickups & effects
+
 function spawn_floater(px,py,txt,col)
   spawn({
     x=px,y=py,kind="floater",ftxt=txt,fcol=col,
@@ -473,92 +568,20 @@ function draw_puddles()
   end
 end
 
-function npc_slip(e)
-  e.x+=(e.slip_vx or 0)
-  if e.slip_vx then e.slip_vx*=0.85 end
-  e.x=mid(e.x,8,1050)
-  if e.timer>38 then e.state="wander" e.timer=0 end
+-->8
+-- tab 5: entities
+
+function spawn(t)
+  t.timer=t.timer or 0
+  entities[#entities+1]=t
+  return t
 end
 
-function npc_wander(e)
-  if on_pud(e) then
-    e.state="slip" e.timer=0
-    e.slip_vx=(flr(rnd(2))==0 and e.dir or -e.dir)*2.5
-    return
-  end
-  local dx=pl.x-e.x  local dy=pl.y-e.y
-  e.dir=dx>0 and 1 or -1
-  if abs(dx)>10 then
-    e.x+=e.dir*e.spd
-    e.y+=mid((e.ty or e.y)-e.y,-0.4,0.4)
-    e.y=mid(e.y,gnd_top,gnd_bot)
-  end
-  e.cooldown=max(0,e.cooldown-1)
-  if abs(dx)<80 and abs(dy)<18 and e.cooldown==0 and pl.mask_cd<=0 then
-    e.state="throw" e.timer=0
-  end
-end
-
-function npc_throw_st(e)
-  if pl.mask_cd>0 then e.state="wander" e.timer=0 return end
-  if e.timer==20 then
-    npc_throw(e)
-    e.cooldown=90+flr(rnd(60))
-  end
-  if e.timer>35 then e.state="wander" e.timer=0 end
-end
-
-function npc_hit(e)
-  if e.timer>20 then e.state="wander" e.timer=0 end
-end
-
-function npc_down(e)
-  if e.timer==0 then
-    sfx(1)
-    for i=1,1+flr(rnd(2)) do
-      spawn_pickup(e.x+flr(rnd(14))-7,e.y)
-    end
-  end
-  if e.timer>120 then e.state="getup" e.timer=0 end
-end
-
-function npc_getup(e)
-  if e.timer>20 then e.state="wander" e.timer=0 e.hp=2 end
-end
-
-function npc_draw(e)
-  local x=e.x-4  local y=e.y-15
-  if e.state=="down" or e.state=="getup" then
-    local prog=(e.state=="getup") and min(e.timer/20,1) or 0
-    rectfill(e.x-7,e.y-flr(3+prog*12),e.x+7,e.y,8)
-    return
-  end
-  if e.state=="slip" then
-    spr(6,e.x-8,e.y-7,2,1,e.dir<0)
-    return
-  end
-  local flash=(e.state=="hit" and e.timer%4<2)
-  local fr=(e.state=="wander") and flr(time()*7)%2 or 0
-  local fl=e.dir<0
-  if flash then for i=0,15 do pal(i,7) end end
-  spr(4+fr,x,y,1,2,fl)
-  pal()
-end
-
-function spawn_npc(px,py)
-  spawn({
-    x=px,y=py,ty=py,dir=1,spd=npc_spd_g,
-    state="wander",timer=0,
-    hp=2,cooldown=npc_cd_g+flr(rnd(npc_cd_g)),kind="npc",
-    hx=-3,hy=-14,hw=6,hh=14,
-    wander=npc_wander,
-    slip=npc_slip,
-    throw=npc_throw_st,
-    hit=npc_hit,
-    down=npc_down,
-    getup=npc_getup,
-    draw=npc_draw,
-  })
+function overlaps(a,b)
+  return a.x+a.hx     < b.x+b.hx+b.hw
+     and a.x+a.hx+a.hw > b.x+b.hx
+     and a.y+a.hy     < b.y+b.hy+b.hh
+     and a.y+a.hy+a.hh > b.y+b.hy
 end
 
 function update_entities()
@@ -587,140 +610,8 @@ function draw_entities()
   end
 end
 
-function _init()
-  entities={}
-  cam_x=0
-  game_state="play"
-  score=0
-  level=1
-  pl.x=64  pl.y=90  pl.dir=1
-  pl.state="idle"  pl.timer=0
-  pl.ammo=12  pl.hp=5
-  pl.jsy=0  pl.jvy=0  pl.jump_cd=0
-  pl.boots=0  pl.mask_cd=0  pl.poncho=0  pl.racket=0  pl.umbrella=0
-  pl.scarf_cd=0  pl.bikini_cd=0
-  wobble=0
-  crowd_cd=150+flr(rnd(150))
-  npc_spd_g=0.7
-  npc_cd_g=90
-  srand(99)
-  for i=1,40 do
-    local px=100+flr(rnd(1400))
-    local py=gnd_top+2+flr(rnd(gnd_bot-gnd_top-4))
-    spawn_pickup(px,py)
-  end
-  srand(77)
-  for i=1,8 do
-    local nx=200+flr(rnd(1200))
-    local ny=gnd_top+2+flr(rnd(gnd_bot-gnd_top-4))
-    spawn_npc(nx,ny)
-  end
-  srand(55)
-  for i=1,15 do
-    local fx=150+flr(rnd(1300))
-    local fy=gnd_top+2+flr(rnd(gnd_bot-gnd_top-4))
-    local r=flr(rnd(10))
-    spawn_food(fx,fy,r<4 and 0 or r<8 and 1 or 2)
-  end
-  srand(33)
-  for i=1,10 do
-    local px=100+flr(rnd(1400))
-    local py=gnd_top+2+flr(rnd(gnd_bot-gnd_top-4))
-    spawn_puddle(px,py)
-  end
-  srand(time())
-  over_music_pending = false
-  over_music_start_pat = -1
-  music(0)
-end
-
-function level_up_init()
-  entities={}  cam_x=0  game_state="play"
-  pl.x=64  pl.y=90  pl.dir=1
-  pl.state="idle"  pl.timer=0
-  pl.jsy=0  pl.jvy=0  pl.jump_cd=0
-  wobble=0  crowd_cd=150+flr(rnd(150))
-  local nc=min(8+(level-1)*2,18)
-  npc_spd_g=min(0.7+(level-1)*0.08,1.3)
-  npc_cd_g=max(90-(level-1)*10,30)
-  srand(99+level*7)
-  for i=1,40 do spawn_pickup(100+flr(rnd(1400)),gnd_top+2+flr(rnd(gnd_bot-gnd_top-4))) end
-  srand(77+level*13)
-  for i=1,nc do spawn_npc(200+flr(rnd(1200)),gnd_top+2+flr(rnd(gnd_bot-gnd_top-4))) end
-  srand(55+level*11)
-  for i=1,15 do
-    local r=flr(rnd(10))
-    spawn_food(150+flr(rnd(1300)),gnd_top+2+flr(rnd(gnd_bot-gnd_top-4)),r<4 and 0 or r<8 and 1 or 2)
-  end
-  srand(33+level*17)
-  local np=min(10+(level-1)*5,40)
-  for i=1,np do
-    spawn_puddle(100+flr(rnd(1400)),gnd_top+2+flr(rnd(gnd_bot-gnd_top-4)))
-  end
-  srand(time())
-end
-
-function draw_level_up()
-  rectfill(24,48,103,80,0)
-  rect(25,49,102,79,9)
-  local lbl="nivel "..level
-  print(lbl,64-#lbl*2,57,9)
-  local msg="buena suerte!"
-  print(msg,64-#msg*2,68,7)
-end
-
-function _update()
-  if over_music_pending then
-    if stat(24) != over_music_start_pat then
-      music(16)
-      over_music_pending = false
-    end
-  end
-  if game_state=="over" then
-    if btnp(4) or btnp(5) then _init() end
-    return
-  end
-  if game_state=="level_up" then
-    level_cd-=1
-    if level_cd<=0 then level_up_init() end
-    return
-  end
-  score+=1
-  crowd_cd-=1
-  if crowd_cd<=0 then crowd_throw() crowd_cd=180+flr(rnd(120)) end
-  wobble=max(0,wobble-1)
-  if pl.mask_cd>0 then pl.mask_cd-=1 end
-  if pl.boots>0 then pl.boots-=1 end
-  if pl.scarf_cd>0 then pl.scarf_cd-=1 end
-  if pl.bikini_cd>0 then pl.bikini_cd-=1 end
-  update_entities()
-  camera_scroll()
-  if pl.x>1040 then
-    sfx(6)
-    level+=1
-    game_state="level_up"
-    level_cd=120
-    return
-  end
-  if pl.hp<=0 then game_state="over" over_music_pending=true over_music_start_pat=stat(24) end
-end
-
-function camera_scroll()
-  cam_x=mid(pl.x-64,0,900)
-end
-
-function _draw()
-  cls(0)
-  local wy=wobble>0 and flr(sin(wobble*0.5)*2) or 0
-  camera(cam_x,wy)
-  draw_bg()
-  draw_entities()
-  draw_floaters()
-  camera(0,0)
-  draw_hud()
-  if game_state=="over" then draw_gameover() end
-  if game_state=="level_up" then draw_level_up() end
-end
+-->8
+-- tab 6: background
 
 function draw_bg()
   rectfill(cam_x, 0, cam_x+127, 79, 12)
@@ -735,62 +626,6 @@ function draw_bg()
   draw_crowd()
   draw_ground_perspective()
   draw_puddles()
-end
-
-function draw_crowd()
-  local sk={15,9,4,14,15,9}
-  local hr={0,4,5,2,8,3}
-  local sh={8,8,2,8,9,2,8,8}  -- tomato-soaked crowd
-
-  -- shadow base ヌ█⬆️ fills entire zone, gaps look like depth between bodies
-  rectfill(cam_x,101,cam_x+127,127,5)
-
-  -- far layer (formerly mid scale: 6-8px wide full figures)
-  local p1=flr(cam_x*0.15)
-  srand(41)
-  for i=1,240 do
-    local cx=flr(rnd(1600))+p1
-    local hw=5+flr(rnd(3))
-    local sc=sk[1+flr(rnd(6))]
-    rectfill(cx-1,112,cx+hw+1,119,sh[1+flr(rnd(8))])
-    rectfill(cx,106,cx+hw,112,sc)
-    rectfill(cx+1,106,cx+hw-1,108,hr[1+flr(rnd(6))])
-  end
-  srand(time())
-
-  -- mid layer (formerly near scale: 12-17px wide heads)
-  local p2=flr(cam_x*0.07)
-  srand(53)
-  for i=1,180 do
-    local cx=flr(rnd(1600))+p2
-    local hw=12+flr(rnd(5))
-    local hh=11+flr(rnd(5))
-    local ty=108+flr(rnd(6))
-    local sc=sk[1+flr(rnd(6))]
-    local hc=hr[1+flr(rnd(6))]
-    local bc=sh[1+flr(rnd(8))]
-    local bob=flr(sin(time()*0.3+cx*0.017)*1)
-    rectfill(cx-4,ty+hh+bob,cx+hw+4,127,bc)
-    rectfill(cx,ty+bob,cx+hw,ty+hh+bob,sc)
-    rectfill(cx,ty+bob,cx+hw,ty+bob+3,hc)
-  end
-  srand(time())
-
-  -- close layer: grid-based (12px slots, 24+px heads) ヌ█⬆️ gaps can never line up
-  srand(79)
-  for seg=0,133 do
-    local cx=seg*12+flr(rnd(12))
-    local hw=24+flr(rnd(10))
-    local hh=16+flr(rnd(8))
-    local ty=116+flr(rnd(7))
-    local sc=sk[1+flr(rnd(6))]
-    local hc=hr[1+flr(rnd(6))]
-    local bc=sh[1+flr(rnd(8))]
-    rectfill(cx-2,124,cx+hw+2,127,bc)
-    rectfill(cx,ty,cx+hw,min(ty+hh,127),sc)
-    rectfill(cx,ty,cx+hw,ty+4,hc)
-  end
-  srand(time())
 end
 
 function draw_clouds()
@@ -962,6 +797,293 @@ function draw_ground_perspective()
   end
 end
 
+function draw_crowd()
+  local sk={15,9,4,14,15,9}
+  local hr={0,4,5,2,8,3}
+  local sh={8,8,2,8,9,2,8,8}  -- tomato-soaked crowd
+
+  -- shadow base fills entire zone, gaps look like depth between bodies
+  rectfill(cam_x,101,cam_x+127,127,5)
+
+  -- far layer (6-8px wide full figures)
+  local p1=flr(cam_x*0.15)
+  srand(41)
+  for i=1,240 do
+    local cx=flr(rnd(1600))+p1
+    local hw=5+flr(rnd(3))
+    local sc=sk[1+flr(rnd(6))]
+    rectfill(cx-1,112,cx+hw+1,119,sh[1+flr(rnd(8))])
+    rectfill(cx,106,cx+hw,112,sc)
+    rectfill(cx+1,106,cx+hw-1,108,hr[1+flr(rnd(6))])
+  end
+  srand(time())
+
+  -- mid layer (12-17px wide heads)
+  local p2=flr(cam_x*0.07)
+  srand(53)
+  for i=1,180 do
+    local cx=flr(rnd(1600))+p2
+    local hw=12+flr(rnd(5))
+    local hh=11+flr(rnd(5))
+    local ty=108+flr(rnd(6))
+    local sc=sk[1+flr(rnd(6))]
+    local hc=hr[1+flr(rnd(6))]
+    local bc=sh[1+flr(rnd(8))]
+    local bob=flr(sin(time()*0.3+cx*0.017)*1)
+    rectfill(cx-4,ty+hh+bob,cx+hw+4,127,bc)
+    rectfill(cx,ty+bob,cx+hw,ty+hh+bob,sc)
+    rectfill(cx,ty+bob,cx+hw,ty+bob+3,hc)
+  end
+  srand(time())
+
+  -- close layer: grid-based (12px slots, 24+px heads) gaps can never line up
+  srand(79)
+  for seg=0,133 do
+    local cx=seg*12+flr(rnd(12))
+    local hw=24+flr(rnd(10))
+    local hh=16+flr(rnd(8))
+    local ty=116+flr(rnd(7))
+    local sc=sk[1+flr(rnd(6))]
+    local hc=hr[1+flr(rnd(6))]
+    local bc=sh[1+flr(rnd(8))]
+    rectfill(cx-2,124,cx+hw+2,127,bc)
+    rectfill(cx,ty,cx+hw,min(ty+hh,127),sc)
+    rectfill(cx,ty,cx+hw,ty+4,hc)
+  end
+  srand(time())
+end
+
+-->8
+-- tab 7: game states & hud
+
+function _init()
+  game_state="title"
+  title_cam=-128
+  title_timer=0
+  title_flash_t=0
+  title_fly={}
+  title_pile={}
+  pile_ht={}
+  title_top_edge={}
+  title_spawn_cd=60
+  for i=0,127 do
+    pile_ht[i]=127
+    title_top_edge[i]=-1
+    for row=32,79 do
+      if sget(i,row)!=0 then
+        title_top_edge[i]=row-8
+        break
+      end
+    end
+  end
+  poke(0x5f2e,1)
+  music(16)
+end
+
+function game_init()
+  entities={}
+  cam_x=0
+  game_state="play"
+  score=0
+  level=1
+  pl.x=64  pl.y=90  pl.dir=1
+  pl.state="idle"  pl.timer=0
+  pl.ammo=12  pl.hp=5
+  pl.jsy=0  pl.jvy=0  pl.jump_cd=0
+  pl.boots=0  pl.mask_cd=0  pl.poncho=0  pl.racket=0  pl.umbrella=0
+  pl.scarf_cd=0  pl.bikini_cd=0
+  wobble=0
+  crowd_cd=150+flr(rnd(150))
+  npc_spd_g=0.7
+  npc_cd_g=90
+  over_music_pending=false
+  over_music_start_pat=-1
+  srand(99)
+  for i=1,40 do
+    local px=100+flr(rnd(1400))
+    local py=gnd_top+2+flr(rnd(gnd_bot-gnd_top-4))
+    spawn_pickup(px,py)
+  end
+  srand(77)
+  for i=1,8 do
+    local nx=200+flr(rnd(1200))
+    local ny=gnd_top+2+flr(rnd(gnd_bot-gnd_top-4))
+    spawn_npc(nx,ny)
+  end
+  srand(55)
+  for i=1,15 do
+    local fx=150+flr(rnd(1300))
+    local fy=gnd_top+2+flr(rnd(gnd_bot-gnd_top-4))
+    local r=flr(rnd(10))
+    spawn_food(fx,fy,r<4 and 0 or r<8 and 1 or 2)
+  end
+  srand(33)
+  for i=1,10 do
+    local px=100+flr(rnd(1400))
+    local py=gnd_top+2+flr(rnd(gnd_bot-gnd_top-4))
+    spawn_puddle(px,py)
+  end
+  srand(time())
+  music(0)
+end
+
+function level_up_init()
+  entities={}  cam_x=0  game_state="play"
+  pl.x=64  pl.y=90  pl.dir=1
+  pl.state="idle"  pl.timer=0
+  pl.jsy=0  pl.jvy=0  pl.jump_cd=0
+  wobble=0  crowd_cd=150+flr(rnd(150))
+  local nc=min(8+(level-1)*2,18)
+  npc_spd_g=min(0.7+(level-1)*0.08,1.3)
+  npc_cd_g=max(90-(level-1)*10,30)
+  srand(99+level*7)
+  for i=1,40 do spawn_pickup(100+flr(rnd(1400)),gnd_top+2+flr(rnd(gnd_bot-gnd_top-4))) end
+  srand(77+level*13)
+  for i=1,nc do spawn_npc(200+flr(rnd(1200)),gnd_top+2+flr(rnd(gnd_bot-gnd_top-4))) end
+  srand(55+level*11)
+  for i=1,15 do
+    local r=flr(rnd(10))
+    spawn_food(150+flr(rnd(1300)),gnd_top+2+flr(rnd(gnd_bot-gnd_top-4)),r<4 and 0 or r<8 and 1 or 2)
+  end
+  srand(33+level*17)
+  local np=min(10+(level-1)*5,40)
+  for i=1,np do
+    spawn_puddle(100+flr(rnd(1400)),gnd_top+2+flr(rnd(gnd_bot-gnd_top-4)))
+  end
+  srand(time())
+end
+
+function update_title_tomatoes()
+  title_spawn_cd-=1
+  if title_spawn_cd<=0 and #title_fly<8 then
+    title_spawn_cd=20+flr(rnd(20))
+    title_fly[#title_fly+1]={
+      x=4+rnd(120),
+      y=-3,
+      vx=-1.5+rnd(3),
+      vy=0.5+rnd(1),
+    }
+  end
+  local alive={}
+  for _,t in ipairs(title_fly) do
+    t.vy+=0.12
+    t.x+=t.vx
+    t.y+=t.vy
+    if t.x<2 then t.x=2 t.vx=abs(t.vx)*0.7 end
+    if t.x>125 then t.x=125 t.vx=-abs(t.vx)*0.7 end
+    local col=mid(0,flr(t.x),127)
+    local te=title_top_edge[col]
+    if te>=0 and pile_ht[col]>te and t.vy>0 and t.y+2>=te and t.y<te+8 then
+      t.y=te-2
+      t.vy=-abs(t.vy)*0.5
+      t.vx=(rnd(1)<0.5 and -1 or 1)*(1.5+rnd(2))
+    end
+    -- circle-circle collision with each settled tomato
+    local on_surf=false
+    for _,s in ipairs(title_pile) do
+      if abs(s.y-t.y)<6 then
+        local dx=t.x-s.x  local dy=t.y-s.y
+        local d2=dx*dx+dy*dy
+        if d2<16 and d2>0 then
+          local d=sqrt(d2)
+          local nx=dx/d  local ny=dy/d
+          t.x+=nx*(4-d)  t.y+=ny*(4-d)
+          local dot=t.vx*nx+t.vy*ny
+          if dot<0 then
+            t.vx-=1.4*dot*nx
+            t.vy-=1.4*dot*ny
+          end
+          if ny<-0.3 then on_surf=true end
+        end
+      end
+    end
+    -- floor
+    if t.y+2>=126 then
+      t.y=124  on_surf=true
+      if abs(t.vy)>0.4 then t.vy=-abs(t.vy)*0.42 else t.vy=0 end
+      t.vx*=0.85
+    end
+    local keep=true
+    if on_surf and abs(t.vx)<0.3 and abs(t.vy)<0.3 then
+      title_pile[#title_pile+1]={x=flr(t.x),y=flr(t.y)}
+      for c=max(0,flr(t.x)-2),min(127,flr(t.x)+2) do
+        pile_ht[c]=min(pile_ht[c],flr(t.y)-2)
+      end
+      keep=false
+    end
+    if keep and t.y>-20 and t.y<132 then alive[#alive+1]=t end
+  end
+  title_fly=alive
+end
+
+function draw_title_tomatoes()
+  for _,p in ipairs(title_pile) do
+    circfill(p.x,p.y,2,8)
+    pset(p.x-1,p.y-1,9)
+  end
+  for _,t in ipairs(title_fly) do
+    circfill(t.x,t.y,2,8)
+    pset(t.x,t.y-2,3)
+    pset(t.x-1,t.y-1,9)
+    pset(t.x,t.y,2)
+  end
+end
+
+function update_title()
+  title_timer+=1
+  if title_cam<0 then
+    title_cam=min(title_cam+4,0)
+    return
+  end
+  title_flash_t=(title_flash_t+1)%40
+  update_title_tomatoes()
+  if (btnp(4) or btnp(5)) and title_timer>30 then
+    game_state="expo"
+  end
+end
+
+function draw_title()
+  cls(0)
+  camera(title_cam,0)
+  draw_title_tomatoes()
+  sspr(0,32,128,48,0,24)
+  if title_cam>=0 then
+    local c=title_flash_t<20 and 7 or 0
+    print("z/x to start",40,104,c)
+  end
+  camera(0,0)
+end
+
+function update_expo()
+  if btnp(4) or btnp(5) then
+    game_init()
+  end
+end
+
+function draw_expo()
+  cls(0)
+  print("every august, the streets",4,12,7)
+  print("of the spanish town of bunol",4,20,7)
+  print("run red.",4,28,7)
+  print("people gather to hurl",4,40,7)
+  print("thousands of tomatoes",4,48,7)
+  print("at each other. for fun.",4,56,7)
+  print("you just want to get out.",4,68,7)
+  print("z/x to enter the chaos",4,112,7)
+end
+
+function camera_scroll()
+  cam_x=mid(pl.x-64,0,900)
+end
+
+function draw_level_up()
+  rectfill(24,48,103,80,0)
+  rect(25,49,102,79,9)
+  local lbl="nivel "..level
+  print(lbl,64-#lbl*2,57,9)
+  local msg="buena suerte!"
+  print(msg,64-#msg*2,68,7)
+end
 
 function draw_gameover()
   rectfill(20,40,107,88,0)
@@ -986,6 +1108,60 @@ function draw_hud()
   if pl.boots>0 then circfill(gx,4,3,4) end
 end
 
+function _update()
+  if game_state=="title" then update_title() return end
+  if game_state=="expo"  then update_expo()  return end
+  if over_music_pending then
+    if stat(24) != over_music_start_pat then
+      music(16)
+      over_music_pending = false
+    end
+  end
+  if game_state=="over" then
+    if btnp(4) or btnp(5) then _init() end
+    return
+  end
+  if game_state=="level_up" then
+    level_cd-=1
+    if level_cd<=0 then level_up_init() end
+    return
+  end
+  score+=1
+  crowd_cd-=1
+  if crowd_cd<=0 then crowd_throw() crowd_cd=180+flr(rnd(120)) end
+  wobble=max(0,wobble-1)
+  if pl.mask_cd>0 then pl.mask_cd-=1 end
+  if pl.boots>0 then pl.boots-=1 end
+  if pl.scarf_cd>0 then pl.scarf_cd-=1 end
+  if pl.bikini_cd>0 then pl.bikini_cd-=1 end
+  update_entities()
+  camera_scroll()
+  if pl.x>1040 then
+    sfx(6)
+    level+=1
+    game_state="level_up"
+    level_cd=120
+    return
+  end
+  if pl.hp<=0 then game_state="over" over_music_pending=true over_music_start_pat=stat(24) end
+end
+
+function _draw()
+  if game_state=="title" then draw_title() pal(14,143,1) return end
+  if game_state=="expo"  then draw_expo()  pal(14,143,1) return end
+  cls(0)
+  local wy=wobble>0 and flr(sin(wobble*0.5)*2) or 0
+  camera(cam_x,wy)
+  draw_bg()
+  draw_entities()
+  draw_floaters()
+  camera(0,0)
+  draw_hud()
+  if game_state=="over" then draw_gameover() end
+  if game_state=="level_up" then draw_level_up() end
+  pal(14,143,1)
+end
+
 __gfx__
 004440000044400000444000004440000024200000242000000000ff2200ff140070000000bbb0000000000000000000001c1600000000000000000000000000
 04fff40004fff40004fff40004fff40002fff20002fff2000000000022220ff400b333000bb00000000000000000000001111110000001910000000000000000
@@ -1003,6 +1179,68 @@ __gfx__
 001d10001000014000000000410d1000440004000044400000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00444000440004000000000004044000100001100141100000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000110001000110100000000000000000000000000000000000000000000000000000000000000000000000000000000000
+bbbb1111000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+aaaa2222000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+99993333000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+88884444070070700000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+ffff5555077770070000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+eeee6666717177700000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+dddd7777077777700000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+cccc0000006070700000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000aaaa000000000000000000000000000000000000
+000000000000000000000000000aaaaa00000000000000aaa0000aaaaa000aa0aaaa0000aaaaa00000000000aaaa000000000000000000000000000000000000
+000000000000000000000000aaaaaaaa000000000000aaaaaa00aaaaaaa00aaaaaaaa00aaaaaaa0000000000aaaa000000000000000000000000000000000000
+000000000000000000aa0000aaaaaaaa000aaaaa000aaaaaaa00aaaaaaa00aaaaaaaa00aaaaaaa0000000aaaaaaa000000000000000000000000000000000000
+000000000000000000aaa000aaaaaa00000aaaaa00aaaaaaaa000000aaa00aaa00aaa000000aaa0000000aaaaaaa000aaa000000000000000000000000000000
+00000000000000000aaaaa00aaaa000000aaaa0000aaa00000000aaaaaa00aaa00aaa000aaaaaa00000aaaaaaaa000aaaaa00000000000000000000000000000
+00000000000000000aaaa000aaaa00aa00aaa00000aaa0000000aaaaaaa00aaa00aaa00aaaaaaa00000aaaa0aaa00aaaaaaa0000000000000000000000000000
+000000000000000000af0000aaaaaaaa00aaaaaa00aaa000000aaaa0aaa00aaa00aaa0aaaa0aaa00000aaa00aaa00aaa00aa0000000000000000000000000000
+0000000000000000000000000aaaaaaa00aaaaaaa0aaaa00000aaa00aaa00aaaaaaaa0aaa00aaa00000aaa00aaa00aaa00aa0000000000000000000000000000
+0000000000000000000aaa000aaaaaa0000aaaaaa0aaaaa0aa00aaaaaaa00aaaaaaaa0aaaaaaaa00000aaa00aaa00aaaaaaa0000000000000000000000000000
+000000000000000000aaaa000aaaa000000000aaaa0aaaaaaa00aaaaaaaa0aaaaaaa000aaaaaaa00000aaaaaaaa0aaaaaaaa0000000000000000000000000000
+0000000000000000000aaa000aaaa000000aaaaaa000aaaaaa000aaa0aa00aaa0aa00000aa00aa000000aaaaaaa00aaa00000000000000000000000000000000
+0000000000000000000aaa000aaaaaaaaa0aaaaaa0000aaa0000000000000aaa000000000000000000000aaaaaa00aaaa0000000000000000000000000000000
+0000000000000000000aaaa00aaaaaaaaa0aaaa0000000000000000000000aaa000000000000000000000000aaa000aaaaaa0000000000000000000000000000
+0000000000000000000aaaa000aaaaaaa0000000000000000000000000000aaa0000000000000000000000000000000aaaa00000000000000000000000000000
+0000000000000000000aaaa000aaaa00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000aaa0000000000000000000888000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000888888888800000000000000000000000000000000000000088880000888800000000000000000000000000000000
+00000000000000000000000000000000088888888888800000000000000000000000000000000000000888880008888880000000000000000000000000000000
+00000000000000000000000000000000888888888888800000000000000000000000000000000000000888880008888880000000000000000000000000000000
+00000000000000000000000000000008888888888888800000000000000088000080000008888000000888880000888880000000000000000000000000000000
+00000880000000000000000000000008888888888880000888000000880888808888000088888880008888880000888800000000000000000000000000000000
+00888880000000000000000000000008888888880000088888880088888888888888800088888888008888888800000000000000000000000000000000000000
+08888880000000000000000000000008800888880000888888888008888888888888800088888888008888888808888000888000000000000000000000880000
+88888880000000000008888800000000000888880000888888888008888888888888800088008888008888888808888808888088800000000000000000888800
+08888880000000000888888880000000000888888008888888888808888888888888800000000888000888888808888008888888880000888880000008888800
+08888888000000008888888888000000000088888008888008888808888088880888800088888888000888800008888008888888888008888888000008888800
+08888888000000008888888888000000000088888008888000888808888088880888800088888888000888800008888008888888888008888888800008888000
+00888888000000008888088888800000000088888008888000888808888088880888800888888888000888800008888008888888888088888888800088888000
+00888888000000000000008888800000000088888008888000888808888088880888800888888888000888800008888008880088888000000888880088888000
+00888888000000000000888888800000000088888008888000888808888088880888808888008888000888800008888088880088888000000888800088880000
+00888888000000000088888888800000000088888008888000888808888088880888808888008888000888800088888088880088880000888888800888880000
+00888888800000000888888888800000000088888008888008888808888088880888808888888888000888800088888088880088880888888888800888880000
+00088888800000000888888888800000000008888008888888888808888088880888800888888888000888888088888088880088880888888888800888800000
+00088888800000008888800888800000000008888800888888888008888088880888800888888888800888888088888088880888880888888888800888800000
+00088888800000008888800888800000000008888800888888888008888008880888800088880888800888888088880088800888808888008888000888800000
+00088888800000000888808888880000000008888800088888880000800000000000000000000080000088888088880088800888808888008888000888000000
+00088888800008880888888888880000000008888800008888000000000000000000000000000000000000000088880088800888808888888888000000000000
+00008888880888880888888888880000000008888000000000000000000000000000000000000000000000000000000088800888808888888888000000000000
+00008888888888880088888888880000000000000000000000000000000000000000000000000000000000000000000000000888800888888888008880000000
+00008888888888888088888088800000000000000000000000000000000000000000000000000000000000000000000000000000000088888888088888000000
+00008888888888888000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000008880088880000000
+00000888888888880000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000080088880000000
+00000888888880000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000008880000000
+00000888888000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000088000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 __sfx__
 01010000080200a0300f03013030170501b0501e0502104024040250402604027040280302805027060240601e0401a0201805017050190501705015010140201303012050100500e0500d0500b0500a05008050
 510200001d62324623276332b6432e6432e3432c3432934325343223431f3431d3431b3431a333173331533313333113330f3330f3330d3230c3230b323093230832308323073230632305313053130131301313
