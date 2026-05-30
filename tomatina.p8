@@ -2,7 +2,10 @@ pico-8 cartridge // http://www.pico-8.com
 version 43
 __lua__
 
--- tomatina
+-- escapa de la tomatina
+-- a game by donald bell
+-- code help by claude
+-- 2026
 -- tab 0: globals
 
 gnd_top = 82
@@ -23,9 +26,17 @@ title_timer = 0
 title_flash_t = 0
 title_fly = {}
 title_pile = {}
-pile_ht = {}
-title_top_edge = {}
 title_spawn_cd = 60
+
+boss_phase="enter"
+boss_timer=0
+truck_x=200
+boss_bcd={0,20,40,60}
+boss_ccd=0
+park_x=40
+truck_hp=0
+truck_blink=0
+end_timer=0
 
 entities = {}
 
@@ -109,6 +120,7 @@ pl.jump = function(e)
 end
 
 pl.draw = function(e)
+  if e.iframes>0 and e.iframes%6<3 then return end
   local jo=e.jsy or 0
   local x=e.x-4  local y=e.y-15+jo
   local fl=e.dir<0
@@ -249,6 +261,9 @@ function throw_tomato(src)
       e.sy+=e.vy
       e.vy+=e.vy<0 and 0.15 or 0.5
       if e.x<cam_x-20 or e.x>cam_x+148 then e.dead=true return end
+      if game_state=="boss" and boss_phase=="park" and e.x>=truck_x and e.x<=truck_x+120 then
+        truck_hp=min(20,truck_hp+1) truck_blink=8 sfx(1) e.dead=true return
+      end
       for _,t in ipairs(entities) do
         if t.kind=="npc" and t.state!="down" and t.state!="hit" then
           if abs(e.x-t.x)<7 and abs(e.y+e.sy-t.y)<16 then
@@ -277,6 +292,34 @@ function throw_tomato(src)
   })
 end
 
+function hit_player(e)
+  if pl.iframes>0 then e.dead=true return end
+  if pl.racket>0 then
+    pl.racket-=1
+    local best,bd=nil,999
+    for _,t in ipairs(entities) do
+      if t.kind=="npc" and t.state!="down" then
+        local d=abs(pl.x-t.x)
+        if d<bd then best=t bd=d end
+      end
+    end
+    if best then
+      local od=pl.dir pl.dir=best.x>pl.x and 1 or -1
+      pl.ammo+=1 throw_tomato(pl) pl.dir=od
+    end
+    spawn_floater(pl.x,pl.y-18,"deflected!",10)
+  elseif pl.poncho>0 then
+    pl.poncho-=1
+    spawn_floater(pl.x,pl.y-18,"blocked!",11)
+  elseif pl.umbrella>0 then
+    if pl.umbrella%2==0 then spawn_floater(pl.x,pl.y-18,"blocked!",11)
+    else pl.hp=max(0,pl.hp-1) end
+    pl.umbrella-=1
+  else pl.hp=max(0,pl.hp-1) end
+  pl.iframes=90
+  e.dead=true
+end
+
 function npc_throw(src)
   local dx=pl.x-src.x
   local dist=abs(dx)
@@ -291,34 +334,7 @@ function npc_throw(src)
       e.sy+=e.vy
       e.vy+=e.vy<0 and 0.15 or 0.5
       if abs(e.x-pl.x)<7 and abs(e.y+e.sy-pl.y)<12 then
-        if pl.racket>0 then
-          pl.racket-=1
-          local best,bd=nil,999
-          for _,t in ipairs(entities) do
-            if t.kind=="npc" and t.state!="down" then
-              local d=abs(pl.x-t.x)
-              if d<bd then best=t bd=d end
-            end
-          end
-          if best then
-            local od=pl.dir pl.dir=best.x>pl.x and 1 or -1
-            pl.ammo+=1 throw_tomato(pl) pl.dir=od
-          end
-          spawn_floater(pl.x,pl.y-18,"deflected!",10)
-        elseif pl.poncho>0 then
-          pl.poncho-=1
-          spawn_floater(pl.x,pl.y-18,"blocked!",11)
-        elseif pl.umbrella>0 then
-          if pl.umbrella%2==0 then
-            spawn_floater(pl.x,pl.y-18,"blocked!",11)
-          else
-            pl.hp=max(0,pl.hp-1)
-          end
-          pl.umbrella-=1
-        else
-          pl.hp=max(0,pl.hp-1)
-        end
-        e.dead=true return
+        hit_player(e) return
       end
       if e.x<cam_x-20 or e.x>cam_x+148 then e.dead=true return end
       if e.sy>=0 then e.sy=0 e.state="splat" e.timer=0 spawn_puddle(e.x,e.y) end
@@ -338,13 +354,13 @@ function npc_throw(src)
   })
 end
 
-function crowd_throw()
+function crowd_throw(fit,ftx)
   local sx=cam_x+64
   local bias=(rnd(10)<6) and flr(rnd(220)) or -flr(rnd(150))
-  local tx=mid(sx+bias,30,1550)
+  local tx=ftx or mid(sx+bias,30,1550)
   local r=flr(rnd(10))
-  local it=r<2 and 0 or r<3 and 1 or r<4 and 2 or r<5 and 3 or r<6 and 4 or r<7 and 5 or r<8 and 6 or 7
-  local nm={"bikini top!","fan scarf!","boots!","scuba mask!","poncho!","padel!","umbrella!","gooool!"}
+  local it=fit or (r<2 and 0 or r<3 and 1 or r<4 and 2 or r<5 and 3 or r<6 and 4 or r<7 and 5 or r<8 and 6 or 7)
+  local nm={"bikini top!","bufanda!","boots!","esnorquel!","poncho!","padel!","paraguas!","gooool!"}
   local ic={14,8,4,1,11,5,12,7}
   spawn({
     x=sx,y=110,sy=0,
@@ -428,41 +444,46 @@ function crowd_throw()
         pset(e.x-1,by+2,0) pset(e.x+1,by+2,0)
       else
         local fc=e.timer%6<3 and c or 7
-        if e.itype==0 then
-          pset(e.x-3,e.y-3,fc) pset(e.x-2,e.y-4,fc)
-          rectfill(e.x-4,e.y-2,e.x-1,e.y,fc)
-          pset(e.x,e.y-1,fc)
-          pset(e.x+2,e.y-3,fc) pset(e.x+3,e.y-4,fc)
-          rectfill(e.x+1,e.y-2,e.x+4,e.y,fc)
-        elseif e.itype==1 then
-          rectfill(e.x-4,e.y-1,e.x+4,e.y,fc)
-          rectfill(e.x-4,e.y-3,e.x-3,e.y-1,fc)
-          rectfill(e.x+3,e.y-3,e.x+4,e.y-1,fc)
-          pset(e.x-1,e.y-1,10) pset(e.x+1,e.y-1,10)
-        elseif e.itype==2 then
-          rectfill(e.x-4,e.y-5,e.x-2,e.y,fc)
-          rectfill(e.x-5,e.y-1,e.x-1,e.y,fc)
-          rectfill(e.x+1,e.y-5,e.x+3,e.y,fc)
-          rectfill(e.x+1,e.y-1,e.x+5,e.y,fc)
-        elseif e.itype==3 then
-          ovalfill(e.x-4,e.y-3,e.x+4,e.y+1,fc)
-          ovalfill(e.x-3,e.y-2,e.x+3,e.y,1)
-        elseif e.itype==4 then
-          rectfill(e.x-4,e.y-3,e.x+4,e.y,fc)
-          rectfill(e.x-2,e.y-5,e.x+2,e.y-3,fc)
-          pset(e.x,e.y-4,7)
-        elseif e.itype==5 then
-          ovalfill(e.x-3,e.y-4,e.x+3,e.y,fc)
-          line(e.x+2,e.y,e.x+5,e.y+3,4)
-        elseif e.itype==6 then
-          ovalfill(e.x-5,e.y-4,e.x+5,e.y-1,fc)
-          line(e.x,e.y-1,e.x,e.y+2,5)
-        else
+        if e.itype==7 then
           circfill(e.x,e.y-2,3,7)
           pset(e.x,e.y-2,0)
           pset(e.x-2,e.y-4,0) pset(e.x+2,e.y-4,0)
           pset(e.x-1,e.y,0) pset(e.x+1,e.y,0)
+        else
+          rectfill(e.x-3,e.y-3,e.x+3,e.y,fc)
         end
+      end
+    end,
+  })
+end
+
+function fire_truck_tomato(sx)
+  local tx=pl.x+flr(rnd(24))-12
+  local dx=tx-sx
+  local vx=mid(dx/12,-3.5,-0.6)
+  spawn({
+    x=sx,y=93,
+    vx=vx,sy=-25,vy=-0.2,
+    state="fly",timer=0,
+    fly=function(e)
+      e.x+=e.vx
+      e.sy+=e.vy
+      e.vy+=e.vy<0 and 0.12 or 0.5
+      if abs(e.x-pl.x)<7 and abs(e.y+e.sy-pl.y)<12 then
+        hit_player(e) return
+      end
+      if e.x<-20 then e.dead=true return end
+      if e.sy>=0 then e.sy=0 e.state="splat" e.timer=0 spawn_puddle(e.x,e.y) end
+    end,
+    splat=function(e) if e.timer>10 then e.dead=true end end,
+    draw=function(e)
+      if e.state=="fly" then
+        pset(e.x,e.y,5)
+        circfill(e.x,e.y+e.sy,1,8)
+      else
+        local r=2+flr(e.timer*0.5)
+        circfill(e.x,e.y,r,8)
+        if e.timer>3 then circfill(e.x,e.y,r-1,2) end
       end
     end,
   })
@@ -726,23 +747,9 @@ function draw_buildings()
         for sl=0,10,2 do
           line(dx,68+sl,dx+dw,68+sl,0)
         end
-        -- striped awning: colour cycles by building position
-        local aw=({8,10,14,9})[1+((x\20)%4)]
-        rectfill(dx-2,63,dx+dw+2,67,7)
-        for sx=dx-2,dx+dw+2,4 do
-          rectfill(sx,63,sx+1,67,aw)
-        end
+        rectfill(dx-2,63,dx+dw+2,67,8)
       else
-        -- too small for door: age crack, corner varies by building size
-        local corner=(bw+bh)%4
-        local crx=(corner==1 or corner==3) and (x+bw-3) or (x+2)
-        local crx2=(corner==1 or corner==3) and (x+bw-4) or (x+3)
-        local cry=(corner>=2) and 74 or (top+2)
-        pset(crx, cry,  5)
-        pset(crx2,cry+1,5)
-        pset(crx, cry+2,5)
-        pset(crx2,cry+3,5)
-        pset(crx, cry+4,5)
+        pset(x+2,74,5) pset(x+3,75,5) pset(x+2,76,5)
       end
     end
     x+=bw
@@ -773,9 +780,6 @@ function draw_castle()
   rectfill(bx+5, 30,bx+9, 34,0)
   -- rocky base
   rectfill(bx-26,50,bx+14,55,4)
-end
-
-function draw_exit()
 end
 
 function draw_ground_perspective()
@@ -829,7 +833,7 @@ function draw_crowd()
     local sc=sk[1+flr(rnd(6))]
     local hc=hr[1+flr(rnd(6))]
     local bc=sh[1+flr(rnd(8))]
-    local bob=flr(sin(time()*0.3+cx*0.017)*1)
+    local bob=game_state=="boss" and flr(sin(time()*0.8+cx*0.017)*4) or flr(sin(time()*0.3+cx*0.017)*1)
     rectfill(cx-4,ty+hh+bob,cx+hw+4,127,bc)
     rectfill(cx,ty+bob,cx+hw,ty+hh+bob,sc)
     rectfill(cx,ty+bob,cx+hw,ty+bob+3,hc)
@@ -846,9 +850,10 @@ function draw_crowd()
     local sc=sk[1+flr(rnd(6))]
     local hc=hr[1+flr(rnd(6))]
     local bc=sh[1+flr(rnd(8))]
+    local bob=game_state=="boss" and flr(sin(time()*0.8+seg*0.35)*4) or 0
     rectfill(cx-2,124,cx+hw+2,127,bc)
-    rectfill(cx,ty,cx+hw,min(ty+hh,127),sc)
-    rectfill(cx,ty,cx+hw,ty+4,hc)
+    rectfill(cx,ty+bob,cx+hw,min(ty+hh+bob,127),sc)
+    rectfill(cx,ty+bob,cx+hw,ty+bob+4,hc)
   end
   srand(time())
 end
@@ -863,19 +868,7 @@ function _init()
   title_flash_t=0
   title_fly={}
   title_pile={}
-  pile_ht={}
-  title_top_edge={}
   title_spawn_cd=60
-  for i=0,127 do
-    pile_ht[i]=127
-    title_top_edge[i]=-1
-    for row=32,79 do
-      if sget(i,row)!=0 then
-        title_top_edge[i]=row-8
-        break
-      end
-    end
-  end
   poke(0x5f2e,1)
   music(16)
 end
@@ -890,7 +883,7 @@ function game_init()
   pl.state="idle"  pl.timer=0
   pl.ammo=12  pl.hp=5
   pl.jsy=0  pl.jvy=0  pl.jump_cd=0
-  pl.boots=0  pl.mask_cd=0  pl.poncho=0  pl.racket=0  pl.umbrella=0
+  pl.boots=0  pl.mask_cd=0  pl.poncho=0  pl.racket=0  pl.umbrella=0  pl.iframes=0
   pl.scarf_cd=0  pl.bikini_cd=0
   wobble=0
   crowd_cd=150+flr(rnd(150))
@@ -928,6 +921,7 @@ function game_init()
 end
 
 function level_up_init()
+  if level==10 then init_boss() return end
   entities={}  cam_x=0  game_state="play"
   pl.x=64  pl.y=90  pl.dir=1
   pl.state="idle"  pl.timer=0
@@ -971,33 +965,7 @@ function update_title_tomatoes()
     t.y+=t.vy
     if t.x<2 then t.x=2 t.vx=abs(t.vx)*0.7 end
     if t.x>125 then t.x=125 t.vx=-abs(t.vx)*0.7 end
-    local col=mid(0,flr(t.x),127)
-    local te=title_top_edge[col]
-    if te>=0 and pile_ht[col]>te and t.vy>0 and t.y+2>=te and t.y<te+8 then
-      t.y=te-2
-      t.vy=-abs(t.vy)*0.5
-      t.vx=(rnd(1)<0.5 and -1 or 1)*(1.5+rnd(2))
-    end
-    -- circle-circle collision with each settled tomato
     local on_surf=false
-    for _,s in ipairs(title_pile) do
-      if abs(s.y-t.y)<6 then
-        local dx=t.x-s.x  local dy=t.y-s.y
-        local d2=dx*dx+dy*dy
-        if d2<16 and d2>0 then
-          local d=sqrt(d2)
-          local nx=dx/d  local ny=dy/d
-          t.x+=nx*(4-d)  t.y+=ny*(4-d)
-          local dot=t.vx*nx+t.vy*ny
-          if dot<0 then
-            t.vx-=1.4*dot*nx
-            t.vy-=1.4*dot*ny
-          end
-          if ny<-0.3 then on_surf=true end
-        end
-      end
-    end
-    -- floor
     if t.y+2>=126 then
       t.y=124  on_surf=true
       if abs(t.vy)>0.4 then t.vy=-abs(t.vy)*0.42 else t.vy=0 end
@@ -1006,9 +974,6 @@ function update_title_tomatoes()
     local keep=true
     if on_surf and abs(t.vx)<0.3 and abs(t.vy)<0.3 then
       title_pile[#title_pile+1]={x=flr(t.x),y=flr(t.y)}
-      for c=max(0,flr(t.x)-2),min(127,flr(t.x)+2) do
-        pile_ht[c]=min(pile_ht[c],flr(t.y)-2)
-      end
       keep=false
     end
     if keep and t.y>-20 and t.y<132 then alive[#alive+1]=t end
@@ -1081,8 +1046,7 @@ function draw_level_up()
   rect(25,49,102,79,9)
   local lbl="nivel "..level
   print(lbl,64-#lbl*2,57,9)
-  local msg="buena suerte!"
-  print(msg,64-#msg*2,68,7)
+
 end
 
 function draw_gameover()
@@ -1111,6 +1075,8 @@ end
 function _update()
   if game_state=="title" then update_title() return end
   if game_state=="expo"  then update_expo()  return end
+  if game_state=="boss"  then update_boss()  return end
+  if game_state=="end"   then update_end()   return end
   if over_music_pending then
     if stat(24) != over_music_start_pat then
       music(16)
@@ -1130,6 +1096,7 @@ function _update()
   crowd_cd-=1
   if crowd_cd<=0 then crowd_throw() crowd_cd=180+flr(rnd(120)) end
   wobble=max(0,wobble-1)
+  if pl.iframes>0 then pl.iframes-=1 end
   if pl.mask_cd>0 then pl.mask_cd-=1 end
   if pl.boots>0 then pl.boots-=1 end
   if pl.scarf_cd>0 then pl.scarf_cd-=1 end
@@ -1149,6 +1116,8 @@ end
 function _draw()
   if game_state=="title" then draw_title() pal(14,143,1) return end
   if game_state=="expo"  then draw_expo()  pal(14,143,1) return end
+  if game_state=="boss"  then draw_boss()  pal(14,143,1) return end
+  if game_state=="end"   then draw_end()   pal(14,143,1) return end
   cls(0)
   local wy=wobble>0 and flr(sin(wobble*0.5)*2) or 0
   camera(cam_x,wy)
@@ -1162,6 +1131,142 @@ function _draw()
   pal(14,143,1)
 end
 
+-->8
+-- tab 8: boss level
+
+function init_boss()
+  entities={}
+  cam_x=0
+  game_state="boss"
+  truck_x=200
+  boss_phase="enter"
+  boss_timer=0
+  boss_bcd={0,20,40,60}
+  boss_ccd=60
+  pl.x=36  pl.y=90  pl.dir=1
+  pl.state="idle"  pl.timer=0
+  pl.jsy=0  pl.jvy=0  pl.jump_cd=0
+  wobble=0  truck_hp=0  truck_blink=0  end_timer=0
+  srand(99+level*3)
+  for i=1,28 do
+    spawn_pickup(8+flr(rnd(110)),gnd_top+2+flr(rnd(gnd_bot-gnd_top-4)))
+  end
+  srand(77+level)
+  for i=1,14 do
+    local r=flr(rnd(10))
+    spawn_food(8+flr(rnd(110)),gnd_top+2+flr(rnd(gnd_bot-gnd_top-4)),r<5 and 0 or r<8 and 1 or 2)
+  end
+  srand(time())
+  local gi={2,3,4,5,6}
+  for i=1,2 do
+    local j=flr(rnd(#gi))+1
+    crowd_throw(gi[j],20+i*18)
+    deli(gi,j)
+  end
+  music(0)
+end
+
+function update_boss()
+  score+=1
+  wobble=max(0,wobble-1)
+  truck_blink=max(0,truck_blink-1)
+  if pl.mask_cd>0 then pl.mask_cd-=1 end
+  if pl.boots>0 then pl.boots-=1 end
+  if pl.scarf_cd>0 then pl.scarf_cd-=1 end
+  if pl.bikini_cd>0 then pl.bikini_cd-=1 end
+  boss_timer+=1
+
+  if boss_phase=="enter" then
+    truck_x-=0.8
+    if truck_x<=park_x then
+      truck_x=park_x
+      boss_phase="park"
+      boss_timer=0
+    end
+
+  elseif boss_phase=="park" then
+    for i=1,4 do
+      boss_bcd[i]-=1
+      if boss_bcd[i]<=0 then
+        fire_truck_tomato(truck_x+20+(i-1)*12)
+        boss_bcd[i]=16+flr(rnd(16))
+      end
+    end
+    boss_ccd-=1
+    if boss_ccd<=0 then
+      crowd_throw()
+      boss_ccd=25+flr(rnd(25))
+    end
+    if boss_timer>=900-truck_hp*15 then
+      boss_phase="depart"
+      boss_timer=0
+      sfx(6)
+    end
+
+  elseif boss_phase=="depart" then
+    if boss_timer<90 then
+      wobble=3
+    else
+      truck_x-=1.5
+    end
+    if truck_x<-65 then
+      game_state="end"
+      end_timer=0
+    end
+  end
+
+  update_entities()
+  pl.x=mid(pl.x,8,122)
+  if pl.hp<=0 then
+    game_state="over"
+    over_music_pending=true
+    over_music_start_pat=stat(24)
+  end
+end
+
+function draw_truck()
+  local tx=flr(truck_x)
+  local wig=0
+  if boss_phase=="depart" and boss_timer<90 then
+    wig=boss_timer%6<3 and 1 or -1
+  end
+  if truck_blink>0 and truck_blink%4<2 then
+    for i=0,15 do pal(i,7) end
+  end
+  sspr(0,80,128,48,tx+wig,38)
+  pal()
+end
+
+function draw_boss()
+  cls(0)
+  local wy=wobble>0 and flr(sin(wobble*0.5)*2) or 0
+  camera(cam_x,wy)
+  draw_bg()
+  draw_truck()
+  draw_entities()
+  draw_floaters()
+  camera(0,0)
+  draw_hud()
+  if pl.hp<=0 then draw_gameover() end
+end
+
+function update_end()
+  end_timer+=1
+  if (btnp(4) or btnp(5)) and end_timer>150 then _init() end
+end
+
+function draw_end()
+  cls(0)
+  print("has sobrevivido",34,32,10)
+  print("a la tomatina",38,42,10)
+  local ss=flr(score/30)
+  local tstr="time: "..ss.."s"
+  print(tstr,64-#tstr*2,64,9)
+  if end_timer>150 then
+    print("z/x to restart",36,100,5)
+  end
+end
+
 __gfx__
 004440000044400000444000004440000024200000242000000000ff2200ff140070000000bbb0000000000000000000001c1600000000000000000000000000
 04fff40004fff40004fff40004fff40002fff20002fff2000000000022220ff400b333000bb00000000000000000000001111110000001910000000000000000
@@ -1173,20 +1278,20 @@ __gfx__
 077777000777770007777ff0077777000828200008282000001100000000000000000000bbbbbbbb000000000000000000000000000000000000000000000000
 0444d0000444d000000000000444d000024240000242400000000000000000000000000000000000000000000000000000000000000000000000000000000000
 01111000011110000000000001111000042420000424200000000000000000000000000000000000000000000000000000000000000000000000000000000000
-01111000011111000000000001111000024240000242400000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00111000111011000000000001111000044444000444400000000000000000000000000000000000000000000000000000000000000000000000000000000000
-0011d000110001000000000001111000444044000044400000000000000000000000000000000000000000000000000000000000000000000000000000000000
+01111000011111000000000001111000044440000444400000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00111000111011000000000001111000044044000444400000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0011d000110001000000000001111000440044000044400000000000000000000000000000000000000000000000000000000000000000000000000000000000
 001d10001000014000000000410d1000440004000044400000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00444000440004000000000004044000100001100141100000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000110001000110100000000000000000000000000000000000000000000000000000000000000000000000000000000000
-bbbb1111000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-aaaa2222000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-99993333000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-88884444070070700000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-ffff5555077770070000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-eeee6666717177700000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-dddd7777077777700000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-cccc0000006070700000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
@@ -1241,6 +1346,56 @@ cccc0000006070700000000000000000000000000000000000000000000000000000000000000000
 00000888888880000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000008880000000
 00000888888000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000088000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000030000000000000000000000000000000000000000000000
+00000000000000000111111111111111111111100000000001100000001000000000000100000000161000001000000000010000000000000000000000000000
+00000000000000d11777777777777777777777100000000305522000005000011000000300000022322210023120000010030000000000000000000000000000
+00000000000001577777777777777777777777710000002483444220283820053000228384022284338420283442000052838220000000000000000000000000
+000000000000177777777777777777777777777100002229944882428984828a3820299884242994838482242944022484298420022d00000000000000000000
+00000000000016667776666666666666666666610022828888888212888828988882888888282888988842289384282898848842288420000000000000000000
+000000000000d11117677777777776677777777110299428888828322888288988422888822222848888428a8488292289888829348442000000000000000000
+000000000001cddd1671111111117767777777711212881244448988424421288425222442882522244425288842242528841289885442000000000000000000
+000000000001c6cc1715151111111767777777711434223422288a88422244424249422229928942822889824824848942225289844842200000000000000000
+00000000000166cc1711dddddd111767777776111888289882244884222898882498882424289884828898882224289884283428842428820000000000000000
+000000000017c7c11711d6c6cc1517677777761cd1882a8982482442882899882888842984298984248988842482298942898842222289820000000000000000
+00000000001c6cc1711dcccccd1117677777761dd144284442248228882488842888842848248842244888842844228442888442842248420000000000000000
+0000000000c6c6c1711cc6c6cc1517677777761cd111111111111111111111111111111111111111111111111111111111111111111111115000000000000000
+0000000001cc6cc1711ccccccd1117677777761dc1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd1000000000000000
+0000000001c6c631711116c6dd1517677777761cd1dcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdc1000000000000000
+0000000001cccc1671111ccddd1117677777761dc1c11111111dcd111111111dc111111111cd111111111dcd111111111dc111111111cd1d1000000000000000
+0000000006c6cc1761111cdddd1517677777761cd1d11111111cdc111111111cd111111111dc111111111cdc111111111cd111111111d11c1000000000000000
+000000000ccddd1711111ddd111177677777761dc1d1d1111d1dcd1111111d1dc111111111cd111111111ddd111111111dc1dd111111c11d1000000000000000
+000000001111115711111111117777677777761cd1d1dddddddcdc1ddddddd1cd11dddddd1dc11dddddd1cdc1ddddddd1cd1dddddd11d11c1000000000000000
+000000117777776771111117777777677777761dc1d1ddddddddcd1ddddddd1dc11dddddd1cd11dddddd1dcd1ddddddd1dc1dddddd11c11d1000000000000000
+000011777777776711111777777777677777761cd1d1dddddddcdc1ddddddd1cd11dddddd1dc11dddddd1cdc1dddddd1dcd1ddddddd1d11d1000000000000000
+000177777777776711777777777777677777761dc1d1ddddddddcd1ddddddd1dc11dddddd1cd11dddddd1dcd1ddddddd1dc1dddddd11c11d1000000000000000
+001777777777776677777777775557677777761cd1d1dddddddcdc1ddddddd1cd11dddddd1dc11dddddd1cdc1dddddd1dcd1dddddd11d11d1000000000000000
+001777777777776677777777711117677777761dc1c1ddddddddcd1ddddddd1dc11dddddd1cd11dddddd1dcd1ddddddd1dc1dddddd11c11d1000000000000000
+001777777777776777777777777777677777761cd1d1dddddddcdc1ddddddd1cd11dddddd1dc11dddddd1cdc1dddddd1dcd1dddddd11d11d1000000000000000
+001111777777776677777777777777677777761dc1c1dddddd1dcd1ddddddd1dc11dddddd1cd11dddddd1dcd1dddddd11dc1dddddd11c11d1000000000000000
+001799177772276777777777777777677777761cd1d1dddddddcdc1ddddddd1cd11dddddd1dc11dddddd1cdc1dddddd1dcd1dddddd11d11d1000000000000000
+001799177729877666666667777777677777761dc1d1dddddd1dcd1ddddddd1dc11dddddd1cd11dddddd1dcd1dddddd11dc1dddddd11c11d1000000000000000
+001f94177777777677777776677777677777761cd1d1dddddd1cdc1ddddddd1cd11dddddd1dc11dddddd1cdc1dddddd11cd1ddddddd1d11c1000000000000000
+0016841777777111111111117666666666666d1dc1c11111111dcd111111111dc111111111cd111111111dcd111111111dc111111111c11d1000000000000000
+001555d77777511111111111567777677777761cd1d1dddddddcdc11dddddddcd1dddddddddc1ddddddddcdcdddddddddcd1dddddddddd1c1000000000000000
+001777777771111555515551116666677777761dd1ddddcdcdcdcdddddcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdddcdcdcdcddd1000000000000000
+00151115151511111111111115111111111111111111111111111111111111111111111111111111111111111111111111111111111111111000000000000000
+01155111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111000000000000000
+01dddd55111111111111111111111515151515111111111111111111111111111111111111111111111111111111111511111111111111111000000000000000
+01ddd555111111111111111111111555555555511111111111111111111111111111111111111111111111111111111111111111111441000000000000000000
+01ddd555151111151111151111151111111111111515111111111111111111111111111111111115111115111115111111111111112981000000000000000000
+01555111111111111666111111111111111111111111111111111111111111111111111111111111111111166d11111111111111112881000000000000000000
+01151515111115116155611111151111111111111111111111111515151515111511111111111111111511655161151115111111111441000000000000000000
+0011111111111116ddddd61111111155555555511111111111111111111111111111111111111111111116ddddd6111111111111111111000000000000000000
+00000111111115161d1d1615111511111111111111111111106115151515151115100000000011111511161d1616151115100001110000000000000000000000
+0000000000511116ddd5d6111111111111111111111111110006111111111111110000000000111111111656dd56111111100001110000000000000000000000
+000000000051151165556115111100000000000000000000000000000000000000000000000000001115116551611111d1100000000000000000000000000000
+00000000000511111666111110000000000000000000000000000000000000000000000000000000511111166611111005500000000000000000000000000000
+00000000000011151111151110000000000000000000000000000000000000000000000000000000011115111115111000000000000000000000000000000000
+00000000000011111111111100000000000000000000000000000000000000000000000000000000001111111111110000000000000000000000000000000000
+00000000000001111515111000000000000000000000000000000000000000000000000000000000000111151511100000000000000000000000000000000000
+00000000000000011111110000000000000000000000000000000000000000000000000000000000000001111111000000000000000000000000000000000000
 __sfx__
 01010000080200a0300f03013030170501b0501e0502104024040250402604027040280302805027060240601e0401a0201805017050190501705015010140201303012050100500e0500d0500b0500a05008050
 510200001d62324623276332b6432e6432e3432c3432934325343223431f3431d3431b3431a333173331533313333113330f3330f3330d3230c3230b323093230832308323073230632305313053130131301313
