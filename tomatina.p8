@@ -25,18 +25,18 @@ title_cam = -128
 title_timer = 0
 title_flash_t = 0
 title_fly = {}
-title_pile = {}
 title_spawn_cd = 60
 
 boss_phase="enter"
 boss_timer=0
 truck_x=200
-boss_bcd={0,20,40,60}
+boss_bcd={0,8,16,24,32,40}
 boss_ccd=0
 park_x=40
 truck_hp=0
 truck_blink=0
 end_timer=0
+demo_t=0 demo_pl={} demo_balls={} fade_n=0
 
 entities = {}
 
@@ -79,16 +79,16 @@ end
 
 pl.idle = function(e)
   if pl_input(e) then e.state="walk" e.timer=0 end
-  if btnp(4) and e.ammo>0 then throw_tomato(e) end
-  if btnp(5) and e.jump_cd==0 then e.state="jump" e.timer=0 e.jvy=-3.5 sfx(5) end
+  if btnp(4) then try_throw(e) end
+  if btnp(5) and e.jump_cd==0 then e.state="jump" e.timer=0 e.jvy=-3.5 sfx(3) end
 end
 
 pl.walk = function(e)
   if not pl_input(e) then e.state="idle" e.timer=0 end
-  if btnp(4) and e.ammo>0 then throw_tomato(e) end
-  if btnp(5) and e.jump_cd==0 then e.state="jump" e.timer=0 e.jvy=-3.5 sfx(5) end
+  if btnp(4) then try_throw(e) end
+  if btnp(5) and e.jump_cd==0 then e.state="jump" e.timer=0 e.jvy=-3.5 sfx(3) end
   if on_pud(e) then
-    e.state="slip" e.timer=0 sfx(3)
+    e.state="slip" e.timer=0 sfx(5)
     local t=flr(rnd(4))
     e.slip_type=t
     if t==1 then e.slip_vx=-e.dir*2.5
@@ -109,7 +109,7 @@ end
 
 pl.jump = function(e)
   pl_input(e)
-  if btnp(4) and e.ammo>0 then throw_tomato(e) end
+  if btnp(4) then try_throw(e) end
   e.jsy+=e.jvy
   e.jvy+=0.5
   if e.jsy>=0 then
@@ -120,7 +120,7 @@ pl.jump = function(e)
 end
 
 pl.draw = function(e)
-  if e.iframes>0 and e.iframes%6<3 then return end
+  if e.iframes>0 and e.iframes%10<5 then return end
   local jo=e.jsy or 0
   local x=e.x-4  local y=e.y-15+jo
   local fl=e.dir<0
@@ -168,6 +168,7 @@ function npc_wander(e)
     e.slip_vx=(flr(rnd(2))==0 and e.dir or -e.dir)*2.5
     return
   end
+  if pl.bikini_cd>0 then return end
   local dx=pl.x-e.x  local dy=pl.y-e.y
   e.dir=dx>0 and 1 or -1
   if abs(dx)>10 then
@@ -182,7 +183,7 @@ function npc_wander(e)
 end
 
 function npc_throw_st(e)
-  if pl.mask_cd>0 then e.state="wander" e.timer=0 return end
+  if pl.mask_cd>0 or pl.bikini_cd>0 then e.state="wander" e.timer=0 return end
   if e.timer==20 then
     npc_throw(e)
     e.cooldown=90+flr(rnd(60))
@@ -191,7 +192,10 @@ function npc_throw_st(e)
 end
 
 function npc_hit(e)
-  if e.timer>20 then e.state="wander" e.timer=0 end
+  if e.timer>20 then
+    if pl.bikini_cd>0 then e.timer=0
+    else e.state="wander" e.timer=0 end
+  end
 end
 
 function npc_down(e)
@@ -246,6 +250,10 @@ end
 -->8
 -- tab 3: projectiles
 
+function try_throw(e)
+  if e.ammo>0 then throw_tomato(e) else sfx(17) end
+end
+
 function throw_tomato(src)
   src.ammo-=1
   if src==pl then pl.throw_cd=10 sfx(2) end
@@ -253,7 +261,7 @@ function throw_tomato(src)
   spawn({
     x=src.x, y=src.y,
     vx=src.dir*3.5+bonus,
-    sy=-4, vy=-1.5,
+    sy=-10, vy=-1.0,
     state="fly", timer=0,
     hx=-2, hy=-2, hw=4, hh=4,
     fly=function(e)
@@ -307,7 +315,7 @@ function hit_player(e)
       local od=pl.dir pl.dir=best.x>pl.x and 1 or -1
       pl.ammo+=1 throw_tomato(pl) pl.dir=od
     end
-    spawn_floater(pl.x,pl.y-18,"deflected!",10)
+    spawn_floater(pl.x,pl.y-18,"bloqueado!",10)
   elseif pl.poncho>0 then
     pl.poncho-=1
     spawn_floater(pl.x,pl.y-18,"blocked!",11)
@@ -316,7 +324,7 @@ function hit_player(e)
     else pl.hp=max(0,pl.hp-1) end
     pl.umbrella-=1
   else pl.hp=max(0,pl.hp-1) end
-  pl.iframes=90
+  pl.iframes=30
   e.dead=true
 end
 
@@ -359,8 +367,8 @@ function crowd_throw(fit,ftx)
   local bias=(rnd(10)<6) and flr(rnd(220)) or -flr(rnd(150))
   local tx=ftx or mid(sx+bias,30,1550)
   local r=flr(rnd(10))
-  local it=fit or (r<2 and 0 or r<3 and 1 or r<4 and 2 or r<5 and 3 or r<6 and 4 or r<7 and 5 or r<8 and 6 or 7)
-  local nm={"bikini top!","bufanda!","boots!","esnorquel!","poncho!","padel!","paraguas!","gooool!"}
+  local it=fit or min(7,max(0,r-1))
+  local nm={"bikini!","bufanda!","botas!","esnorquel!","poncho!","padel!","paraguas!","gooool!"}
   local ic={14,8,4,1,11,5,12,7}
   spawn({
     x=sx,y=110,sy=0,
@@ -389,9 +397,13 @@ function crowd_throw(fit,ftx)
             e.vx=sgn(best.x-e.x)*1.5 e.bounces=0
             e.state="kick" e.timer=0
             spawn_floater(e.x,e.y-10,"gooool!",10)
+            poke(0x5f82,1)
           else e.dead=true end
         else
           if e.itype==0 then pl.bikini_cd=300
+            for _,n in ipairs(entities) do
+              if n.kind=="npc" and n.state!="down" then n.state="hit" n.timer=0 end
+            end
           elseif e.itype==1 then pl.scarf_cd=300
           elseif e.itype==2 then pl.boots=1200
           elseif e.itype==3 then pl.mask_cd=300
@@ -431,26 +443,18 @@ function crowd_throw(fit,ftx)
       if e.timer>120 then e.dead=true end
     end,
     draw=function(e)
-      local c=e.icol
+      local ws={11,10,26,8,9,13,12,25}
       if e.state=="fly" then
-        if e.timer%8<4 then rectfill(e.x-2,e.y-3,e.x+2,e.y,c)
-        else rectfill(e.x-3,e.y-1,e.x+3,e.y+1,c) end
+        spr(ws[e.itype+1],e.x-4,e.y-4)
       elseif e.state=="kick" then
         ovalfill(e.x-3,e.y,e.x+3,e.y+1,5)
         local by=e.y+e.sy
-        circfill(e.x,by,3,7)
-        pset(e.x,by,0)
-        pset(e.x-2,by-2,0) pset(e.x+2,by-2,0)
-        pset(e.x-1,by+2,0) pset(e.x+1,by+2,0)
+        spr(25,e.x-4,by-4)
       else
-        local fc=e.timer%6<3 and c or 7
         if e.itype==7 then
-          circfill(e.x,e.y-2,3,7)
-          pset(e.x,e.y-2,0)
-          pset(e.x-2,e.y-4,0) pset(e.x+2,e.y-4,0)
-          pset(e.x-1,e.y,0) pset(e.x+1,e.y,0)
+          spr(25,e.x-4,e.y-6)
         else
-          rectfill(e.x-3,e.y-3,e.x+3,e.y,fc)
+          spr(ws[e.itype+1],e.x-4,flr(e.y-8+sin(time())*2))
         end
       end
     end,
@@ -458,9 +462,9 @@ function crowd_throw(fit,ftx)
 end
 
 function fire_truck_tomato(sx)
-  local tx=pl.x+flr(rnd(24))-12
+  local tx=pl.x+flr(rnd(80))-40
   local dx=tx-sx
-  local vx=mid(dx/12,-3.5,-0.6)
+  local vx=dx>=0 and mid(dx/10,0.8,5) or mid(dx/10,-5,-0.8)
   spawn({
     x=sx,y=93,
     vx=vx,sy=-25,vy=-0.2,
@@ -472,7 +476,7 @@ function fire_truck_tomato(sx)
       if abs(e.x-pl.x)<7 and abs(e.y+e.sy-pl.y)<12 then
         hit_player(e) return
       end
-      if e.x<-20 then e.dead=true return end
+      if e.x<-20 or e.x>148 then e.dead=true return end
       if e.sy>=0 then e.sy=0 e.state="splat" e.timer=0 spawn_puddle(e.x,e.y) end
     end,
     splat=function(e) if e.timer>10 then e.dead=true end end,
@@ -528,18 +532,7 @@ function spawn_food(px,py,kind)
       end
     end,
     draw=function(e)
-      if e.fkind==0 then
-        rectfill(e.x-3,e.y-1,e.x+3,e.y,7)
-        pset(e.x-3,e.y-3,7) pset(e.x+3,e.y-3,7)
-        rectfill(e.x-2,e.y-3,e.x+2,e.y-1,10)
-        pset(e.x-1,e.y-2,4) pset(e.x+1,e.y-3,4)
-      elseif e.fkind==1 then
-        rectfill(e.x-3,e.y-1,e.x+3,e.y,4)
-        rectfill(e.x-2,e.y-2,e.x+2,e.y-1,15)
-      else
-        rectfill(e.x-2,e.y-4,e.x+2,e.y,10)
-        rectfill(e.x-2,e.y-5,e.x+2,e.y-4,7)
-      end
+      spr(22+e.fkind,e.x-4,e.y-8)
     end,
   })
 end
@@ -691,16 +684,15 @@ end
 
 function draw_palms()
   local prx=flr(cam_x*0.55)
+  local fr={{-5,39},{-2,37},{3,37},{6,39},{5,43},{-3,43}}
   srand(11)
   for i=1,10 do
     local px=flr(rnd(1600))+prx
     rectfill(px,47,px+1,79,4)
-    line(px,47,px-5,39,11) line(px+1,47,px-4,39,11)
-    line(px,47,px-2,37,11) line(px+1,47,px-1,37,11)
-    line(px,47,px+3,37,11) line(px+1,47,px+4,37,11)
-    line(px,47,px+6,39,11) line(px+1,47,px+7,39,11)
-    line(px,47,px+5,43,11) line(px+1,47,px+6,43,11)
-    line(px,47,px-3,43,11) line(px+1,47,px-2,43,11)
+    for _,f in ipairs(fr) do
+      line(px,47,px+f[1],f[2],11)
+      line(px+1,47,px+f[1]+1,f[2],11)
+    end
   end
   srand(time())
 end
@@ -715,7 +707,6 @@ function draw_buildings()
     local bh =16+flr(rnd(20))
     local bc =wcs[1+flr(rnd(6))]
     local gf =flr(rnd(4))
-    local wt =flr(rnd(2))
     local top=79-bh
     rectfill(x,top,x+bw,79,bc)
     rectfill(x,top,x+bw,top+1,5)
@@ -727,14 +718,8 @@ function draw_buildings()
         local wsp=flr(bw/(nw+1))
         for j=1,nw do
           local wx=x+j*wsp-2
-          if wt==0 then
-            rectfill(wx,wy,wx+4,wy+5,5)
-            rectfill(wx+1,wy+1,wx+3,wy+4,1)
-          else
-            rectfill(wx,wy,wx+5,wy+5,5)
-            rectfill(wx+1,wy+1,wx+2,wy+4,1)
-            rectfill(wx+3,wy+1,wx+4,wy+4,1)
-          end
+          rectfill(wx,wy,wx+4,wy+5,5)
+          rectfill(wx+1,wy+1,wx+3,wy+4,1)
         end
         wy+=10
       end
@@ -771,10 +756,7 @@ function draw_castle()
   rectfill(bx-22,23,bx-20,27,9)
   -- main tower
   rectfill(bx,24,bx+14,55,9)
-  rectfill(bx,   20,bx+2,  24,9)
-  rectfill(bx+4, 20,bx+6,  24,9)
-  rectfill(bx+8, 20,bx+10, 24,9)
-  rectfill(bx+12,20,bx+14, 24,9)
+  for mi=0,3 do rectfill(bx+mi*4,20,bx+mi*4+2,24,9) end
   -- tower window
   rectfill(bx+4, 34,bx+10,42,0)
   rectfill(bx+5, 30,bx+9, 34,0)
@@ -833,7 +815,7 @@ function draw_crowd()
     local sc=sk[1+flr(rnd(6))]
     local hc=hr[1+flr(rnd(6))]
     local bc=sh[1+flr(rnd(8))]
-    local bob=game_state=="boss" and flr(sin(time()*0.8+cx*0.017)*4) or flr(sin(time()*0.3+cx*0.017)*1)
+    local bob=game_state=="boss" and flr(sin(time()*0.8+cx*0.017)*4) or 0
     rectfill(cx-4,ty+hh+bob,cx+hw+4,127,bc)
     rectfill(cx,ty+bob,cx+hw,ty+hh+bob,sc)
     rectfill(cx,ty+bob,cx+hw,ty+bob+3,hc)
@@ -867,7 +849,6 @@ function _init()
   title_timer=0
   title_flash_t=0
   title_fly={}
-  title_pile={}
   title_spawn_cd=60
   poke(0x5f2e,1)
   music(16)
@@ -877,6 +858,8 @@ function game_init()
   entities={}
   cam_x=0
   game_state="play"
+  fade_n=0
+  poke(0x5f81,1)
   score=0
   level=1
   pl.x=64  pl.y=90  pl.dir=1
@@ -949,48 +932,22 @@ end
 
 function update_title_tomatoes()
   title_spawn_cd-=1
-  if title_spawn_cd<=0 and #title_fly<8 then
-    title_spawn_cd=20+flr(rnd(20))
-    title_fly[#title_fly+1]={
-      x=4+rnd(120),
-      y=-3,
-      vx=-1.5+rnd(3),
-      vy=0.5+rnd(1),
-    }
+  if title_spawn_cd<=0 and #title_fly<12 then
+    title_spawn_cd=15+flr(rnd(15))
+    title_fly[#title_fly+1]={x=rnd(128),y=-3,vy=0.8+rnd(1.2)}
   end
   local alive={}
   for _,t in ipairs(title_fly) do
-    t.vy+=0.12
-    t.x+=t.vx
     t.y+=t.vy
-    if t.x<2 then t.x=2 t.vx=abs(t.vx)*0.7 end
-    if t.x>125 then t.x=125 t.vx=-abs(t.vx)*0.7 end
-    local on_surf=false
-    if t.y+2>=126 then
-      t.y=124  on_surf=true
-      if abs(t.vy)>0.4 then t.vy=-abs(t.vy)*0.42 else t.vy=0 end
-      t.vx*=0.85
-    end
-    local keep=true
-    if on_surf and abs(t.vx)<0.3 and abs(t.vy)<0.3 then
-      title_pile[#title_pile+1]={x=flr(t.x),y=flr(t.y)}
-      keep=false
-    end
-    if keep and t.y>-20 and t.y<132 then alive[#alive+1]=t end
+    if t.y<128 then alive[#alive+1]=t end
   end
   title_fly=alive
 end
 
 function draw_title_tomatoes()
-  for _,p in ipairs(title_pile) do
-    circfill(p.x,p.y,2,8)
-    pset(p.x-1,p.y-1,9)
-  end
   for _,t in ipairs(title_fly) do
     circfill(t.x,t.y,2,8)
     pset(t.x,t.y-2,3)
-    pset(t.x-1,t.y-1,9)
-    pset(t.x,t.y,2)
   end
 end
 
@@ -1003,7 +960,7 @@ function update_title()
   title_flash_t=(title_flash_t+1)%40
   update_title_tomatoes()
   if (btnp(4) or btnp(5)) and title_timer>30 then
-    game_state="expo"
+    init_demo()
   end
 end
 
@@ -1014,27 +971,84 @@ function draw_title()
   sspr(0,32,128,48,0,24)
   if title_cam>=0 then
     local c=title_flash_t<20 and 7 or 0
-    print("z/x to start",40,104,c)
+    print("start",56,104,c)
   end
   camera(0,0)
 end
 
-function update_expo()
-  if btnp(4) or btnp(5) then
-    game_init()
-  end
+
+function init_demo()
+  demo_t=0  cam_x=0  demo_balls={}
+  demo_pl={x=-8,y=90,jsy=0,jvy=0,tcd=0}
+  game_state="demo"
 end
 
-function draw_expo()
-  cls(0)
-  print("every august, the streets",4,12,7)
-  print("of the spanish town of bunol",4,20,7)
-  print("run red.",4,28,7)
-  print("people gather to hurl",4,40,7)
-  print("thousands of tomatoes",4,48,7)
-  print("at each other. for fun.",4,56,7)
-  print("you just want to get out.",4,68,7)
-  print("z/x to enter the chaos",4,112,7)
+function demo_ball(p)
+  demo_balls[#demo_balls+1]={x=p.x,y=p.y,vx=3.5,sy=-10,vy=-1.0}
+  p.tcd=12  sfx(2)
+end
+
+function update_demo()
+  local p=demo_pl
+  if demo_t==0 then
+    if btnp(4) or btnp(5) then demo_t+=1 end
+    return
+  end
+  demo_t+=1
+  local t=demo_t
+  if t<=35 then p.x+=1.5 end
+  if t==50 or t==120 then p.jvy=-3.5 end
+  if p.jvy!=0 or p.jsy<0 then
+    p.jsy+=p.jvy  p.jvy+=0.5
+    if p.jsy>=0 then p.jsy=0 p.jvy=0 end
+  end
+  if t==75 or t==90 or t==105 then demo_ball(p) end
+  if t>155 then
+    local px=flr(p.x)
+    game_init()
+    pl.x=px
+    return
+  end
+  p.tcd=max(0,p.tcd-1)
+  local alive={}
+  for _,b in ipairs(demo_balls) do
+    b.x+=b.vx  b.sy+=b.vy
+    b.vy+=b.vy<0 and 0.15 or 0.5
+    if b.sy<0 then alive[#alive+1]=b end
+  end
+  demo_balls=alive
+end
+
+function draw_demo()
+  if demo_t>150 then
+    draw_bg()
+  else
+    cls(0)
+    if demo_t>0 then pal(7,demo_t<16 and 6 or demo_t<31 and 5 or 0) end
+    print("every august, the streets",4,12,7)
+    print("of the spanish town of bunol",4,20,7)
+    print("run red.",4,28,7)
+    print("people gather to hurl",4,40,7)
+    print("thousands of tomatoes",4,48,7)
+    print("at each other. for fun.",4,56,7)
+    print("you just want to get out.",4,68,7)
+    if demo_t==0 then print("press to enter the chaos",4,112,7) end
+    pal()
+  end
+  local p=demo_pl
+  for _,b in ipairs(demo_balls) do
+    pset(b.x,b.y,5)
+    circfill(b.x,b.y+b.sy,1,8)
+  end
+  local x=p.x-4  local y=p.y-15+p.jsy
+  if p.tcd>0 then
+    spr(2,x,y,1,1,false)  spr(16,x,y+8,1,1,false)
+  elseif demo_t<=35 then
+    local ts=flr(time()*8)%2==0 and 1 or 3
+    spr(ts,x,y,1,2,false)
+  else
+    spr(0,x,y,1,2,false)
+  end
 end
 
 function camera_scroll()
@@ -1044,7 +1058,7 @@ end
 function draw_level_up()
   rectfill(24,48,103,80,0)
   rect(25,49,102,79,9)
-  local lbl="nivel "..level
+  local lbl=level==10 and "ronda final!" or "nivel "..level
   print(lbl,64-#lbl*2,57,9)
 
 end
@@ -1055,7 +1069,7 @@ function draw_gameover()
   print("game over",37,50,8)
   local ss=flr(score/30)
   print("survived: "..ss.."s",33,63,7)
-  print("z/x to restart",29,76,5)
+  if over_timer>90 then print("z/x to restart",29,76,5) end
 end
 
 function draw_hud()
@@ -1070,11 +1084,31 @@ function draw_hud()
   if pl.poncho>0 then circfill(gx,4,3,11) print(pl.poncho,gx-1,0,7) gx-=8 end
   if pl.mask_cd>0 then circfill(gx,4,3,1) gx-=8 end
   if pl.boots>0 then circfill(gx,4,3,4) end
+  local gi=0
+  if pl.bikini_cd>0 then gi+=1 end
+  if pl.scarf_cd>0 then gi+=2 end
+  if pl.boots>0 then gi+=4 end
+  if pl.mask_cd>0 then gi+=8 end
+  if pl.poncho>0 then gi+=16 end
+  if pl.racket>0 then gi+=32 end
+  if pl.umbrella>0 then gi+=64 end
+  poke(0x5f80,gi)
+end
+
+function tick_cd()
+  score+=1
+  wobble=max(0,wobble-1)
+  if pl.iframes>0 then pl.iframes-=1 end
+  if pl.mask_cd>0 then pl.mask_cd-=1 end
+  if pl.boots>0 then pl.boots-=1 end
+  if pl.scarf_cd>0 then pl.scarf_cd-=1 end
+  if pl.bikini_cd>0 then pl.bikini_cd-=1 end
 end
 
 function _update()
+  poke(0x5f81,0) poke(0x5f82,0) poke(0x5f83,0)
   if game_state=="title" then update_title() return end
-  if game_state=="expo"  then update_expo()  return end
+  if game_state=="demo"  then update_demo()  return end
   if game_state=="boss"  then update_boss()  return end
   if game_state=="end"   then update_end()   return end
   if over_music_pending then
@@ -1084,7 +1118,8 @@ function _update()
     end
   end
   if game_state=="over" then
-    if btnp(4) or btnp(5) then _init() end
+    over_timer+=1
+    if (btnp(4) or btnp(5)) and over_timer>90 then _init() end
     return
   end
   if game_state=="level_up" then
@@ -1092,15 +1127,9 @@ function _update()
     if level_cd<=0 then level_up_init() end
     return
   end
-  score+=1
+  tick_cd()
   crowd_cd-=1
   if crowd_cd<=0 then crowd_throw() crowd_cd=180+flr(rnd(120)) end
-  wobble=max(0,wobble-1)
-  if pl.iframes>0 then pl.iframes-=1 end
-  if pl.mask_cd>0 then pl.mask_cd-=1 end
-  if pl.boots>0 then pl.boots-=1 end
-  if pl.scarf_cd>0 then pl.scarf_cd-=1 end
-  if pl.bikini_cd>0 then pl.bikini_cd-=1 end
   update_entities()
   camera_scroll()
   if pl.x>1040 then
@@ -1110,12 +1139,12 @@ function _update()
     level_cd=120
     return
   end
-  if pl.hp<=0 then game_state="over" over_music_pending=true over_music_start_pat=stat(24) end
+  if pl.hp<=0 then game_state="over" over_timer=0 over_music_pending=true over_music_start_pat=stat(24) end
 end
 
 function _draw()
   if game_state=="title" then draw_title() pal(14,143,1) return end
-  if game_state=="expo"  then draw_expo()  pal(14,143,1) return end
+  if game_state=="demo"  then draw_demo()  pal(14,143,1) return end
   if game_state=="boss"  then draw_boss()  pal(14,143,1) return end
   if game_state=="end"   then draw_end()   pal(14,143,1) return end
   cls(0)
@@ -1128,6 +1157,13 @@ function _draw()
   draw_hud()
   if game_state=="over" then draw_gameover() end
   if game_state=="level_up" then draw_level_up() end
+  if fade_n>0 then
+    local fp={0x1111,0x2222,0x5555,0x7777,0xffff}
+    fillp(fp[min(5,flr(fade_n/4)+1)])
+    rectfill(0,0,127,127,0)
+    fillp()
+    fade_n-=1
+  end
   pal(14,143,1)
 end
 
@@ -1138,10 +1174,11 @@ function init_boss()
   entities={}
   cam_x=0
   game_state="boss"
+  poke(0x5f83,1)
   truck_x=200
   boss_phase="enter"
   boss_timer=0
-  boss_bcd={0,20,40,60}
+  boss_bcd={0,8,16,24,32,40}
   boss_ccd=60
   pl.x=36  pl.y=90  pl.dir=1
   pl.state="idle"  pl.timer=0
@@ -1167,13 +1204,8 @@ function init_boss()
 end
 
 function update_boss()
-  score+=1
-  wobble=max(0,wobble-1)
+  tick_cd()
   truck_blink=max(0,truck_blink-1)
-  if pl.mask_cd>0 then pl.mask_cd-=1 end
-  if pl.boots>0 then pl.boots-=1 end
-  if pl.scarf_cd>0 then pl.scarf_cd-=1 end
-  if pl.bikini_cd>0 then pl.bikini_cd-=1 end
   boss_timer+=1
 
   if boss_phase=="enter" then
@@ -1185,11 +1217,11 @@ function update_boss()
     end
 
   elseif boss_phase=="park" then
-    for i=1,4 do
+    for i=1,6 do
       boss_bcd[i]-=1
       if boss_bcd[i]<=0 then
-        fire_truck_tomato(truck_x+20+(i-1)*12)
-        boss_bcd[i]=16+flr(rnd(16))
+        fire_truck_tomato(truck_x+20+(i-1)*10)
+        boss_bcd[i]=10+flr(rnd(12))
       end
     end
     boss_ccd-=1
@@ -1219,6 +1251,7 @@ function update_boss()
   pl.x=mid(pl.x,8,122)
   if pl.hp<=0 then
     game_state="over"
+    over_timer=0
     over_music_pending=true
     over_music_start_pat=stat(24)
   end
@@ -1272,17 +1305,17 @@ __gfx__
 04fff40004fff40004fff40004fff40002fff20002fff2000000000022220ff400b333000bb00000000000000000000001111110000001910000000000000000
 0fff1f000fff1f000fff1f000fff1f000fff5f000fff5f00000000111120ff14003003000b000000000000000000000011111111000009b90000000000000000
 0ffff0000ffff0000ffff0000ffff0000ffff0000ffff0000000111121200000000333000bb00000820000000000000000010000000009190000000000000000
-00777000007770000077700000777000008880000088800000111111111fff000000000000bbbb00082828000000e0000001000000000d9d0000000000000000
-077f7000077f7000077f7000077f7000082f2000082f20001100001022000000000000000bbbbbb00000000000eee00000010400000000900000000000000000
-0777ff000777f7000777ff00077f77000289800002898000100141000000000000000000bbbbbbbb000000000000e00000001600000000d00000000000000000
+00777000007770000077700000777000008880000088800000111111111fff000000000000bbbb00082828000000c0000001000000000d9d0000000000000000
+077f7000077f7000077f7000077f7000082f2000082f20001100001022000000000000000bbbbbb00000000000bccc0000010400000000900000000000000000
+0777ff000777f7000777ff00077f77000289800002898000100141000000000000000000bbbbbbbb000000000000cc0000001600000000d00000000000000000
 077777000777770007777ff0077777000828200008282000001100000000000000000000bbbbbbbb000000000000000000000000000000000000000000000000
 0444d0000444d000000000000444d000024240000242400000000000000000000000000000000000000000000000000000000000000000000000000000000000
-01111000011110000000000001111000042420000424200000000000000000000000000000000000000000000000000000000000000000000000000000000000
-01111000011111000000000001111000044440000444400000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00111000111011000000000001111000044044000444400000000000000000000000000000000000000000000000000000000000000000000000000000000000
-0011d000110001000000000001111000440044000044400000000000000000000000000000000000000000000000000000000000000000000000000000000000
-001d10001000014000000000410d1000440004000044400000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00444000440004000000000004044000100001100141100000000000000000000000000000000000000000000000000000000000000000000000000000000000
+01111000011110000000000001111000042420000424200000000000000000000777700000717700000000000000000000000000000000000000000000000000
+01111000011111000000000001111000044440000444400000a787000000000007aa770007777710004449000000000000000000000000000000000000000000
+0011100011101100000000000111100004404400044440000a9a9a900ffff7f0077a707007717770000444000000000000000000000000000000000000000000
+0011d000110001000000000001111000440044000044400007a9a970f8e8e8ef07a7a07007777770000441000000000000000000000000000000000000000000
+001d10001000014000000000410d10004400040000444000077a97700ff7fff007aa770007177170000444400000000000000000000000000000000000000000
+00444000440004000000000004044000100001100141100000777700000000000777700000777700000000000000000000000000000000000000000000000000
 00000000000000000000000000000000110001000110100000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
@@ -1397,8 +1430,8 @@ __gfx__
 00000000000001111515111000000000000000000000000000000000000000000000000000000000000111151511100000000000000000000000000000000000
 00000000000000011111110000000000000000000000000000000000000000000000000000000000000001111111000000000000000000000000000000000000
 __sfx__
-01010000080200a0300f03013030170501b0501e0502104024040250402604027040280302805027060240601e0401a0201805017050190501705015010140201303012050100500e0500d0500b0500a05008050
-510200001d62324623276332b6432e6432e3432c3432934325343223431f3431d3431b3431a333173331533313333113330f3330f3330d3230c3230b323093230832308323073230632305313053130131301313
+00010000080200a0300f03013030170501b0501e0502104024040250402604027040280302805027060240601e0401a0201805017050190501705015010140201303012050100500e0500d0500b0500a05008050
+500200001d62324623276332b6432e6432e3432c3432934325343223431f3431d3431b3431a333173331533313333113330f3330f3330d3230c3230b323093230832308323073230632305313053130131301313
 490100000c615126151462516625186251c63520635266352863528635266352463522635206351e6251a62518625166251462512625106250e6150c6150a6150861506615066150061500615006050060500605
 510100000c0110e0110e011100111001112011140211602118021180211a0211a0211c0211c0211e021200312003122031220312203124041240412604126041260412804128041280412a0412a0412c0412c041
 08010000105012655126511265212852128531285312854128541295512b5512b5512b5512b5612b5512b5512b5512b5512b5412b5312b5312b5312b5312b5312b5312b5312b5312b5312b5312b5112b5112b511
@@ -1414,7 +1447,7 @@ __sfx__
 05200020100361002210116100351002710116100321002711036110251111711036110221111311036110270c0360c0220c0170c0260c0320c0160c0250c0120c0370c0160c7270c0160c0320c0160c7250c017
 491000003c6253c6213c6153c6253c6153c6213c6253c6153c6253c6253c6113c6253c6253c6113c6253c0053c6113c6253c6253c0053c6253c6113c6253c0053c6253c6253c6113c6253c6253c6113c0053c615
 a51000200c5450c5200c1150c5450c5250c1150c5450c5250c5450c5250c1150c5450c5220c1150c5450c5250c5450c5250c1150c5450c5200c1150c5450c5250c5450c5250c1150c5450c5220c1150c5450c520
-001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+a00100001b530165501c550165501c550145501a550135301a5201251018510095030950308503075030a50309503085030350301503005030050300500005000050000500005000050000500005000050000500
 001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
