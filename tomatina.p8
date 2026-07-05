@@ -15,6 +15,8 @@ game_state = "title"
 score = 0
 wobble = 0
 crowd_cd = 0
+smk = {}
+smoke_cd = 0
 level = 1
 level_cd = 0
 npc_spd_g = 0.7
@@ -640,6 +642,33 @@ function draw_bg()
   draw_crowd()
   draw_ground_perspective()
   draw_puddles()
+  draw_smoke()
+end
+
+function tick_smoke()
+  smoke_cd-=1
+  if smoke_cd<=0 then
+    local sx=cam_x+rnd(128)
+    for i=1,2+flr(rnd(2)) do
+      add(smk,{x=sx+rnd(4)-2,y=104+rnd(12),dx=rnd(0.4)-0.2,dy=0.35,rad=2,act=40+flr(rnd(15)),clr=rnd({6,7,7,7})})
+    end
+    smoke_cd=200+flr(rnd(280))
+  end
+  move_smoke()
+end
+
+function move_smoke()
+  for p in all(smk) do
+    p.x+=p.dx  p.y-=(p.dy or 0.25)  p.act-=1
+    if p.act<12 then p.rad=0 end
+    if p.act<0 then del(smk,p) end
+  end
+end
+
+function draw_smoke()
+  for p in all(smk) do
+    circfill(p.x,p.y,p.rad,p.clr)
+  end
 end
 
 function draw_clouds()
@@ -785,7 +814,7 @@ end
 
 function draw_crowd()
   local sk={15,9,4,14,15,9}
-  local hr={0,4,5,2,8,3}
+  local hr={0,4,5,2,8,9}
   local sh={8,8,2,8,9,2,8,8}  -- tomato-soaked crowd
 
   -- shadow base fills entire zone, gaps look like depth between bodies
@@ -815,7 +844,7 @@ function draw_crowd()
     local sc=sk[1+flr(rnd(6))]
     local hc=hr[1+flr(rnd(6))]
     local bc=sh[1+flr(rnd(8))]
-    local bob=game_state=="boss" and flr(sin(time()*0.8+cx*0.017)*4) or 0
+    local bob=game_state=="boss" and flr(sin(time()*0.8+cx*0.017)*4) or flr(sin(time()*0.3+cx*0.017)*1)
     rectfill(cx-4,ty+hh+bob,cx+hw+4,127,bc)
     rectfill(cx,ty+bob,cx+hw,ty+hh+bob,sc)
     rectfill(cx,ty+bob,cx+hw,ty+bob+3,hc)
@@ -870,6 +899,7 @@ function game_init()
   pl.scarf_cd=0  pl.bikini_cd=0
   wobble=0
   crowd_cd=150+flr(rnd(150))
+  smk={}  smoke_cd=90+flr(rnd(120))
   npc_spd_g=0.7
   npc_cd_g=90
   over_music_pending=false
@@ -910,6 +940,7 @@ function level_up_init()
   pl.state="idle"  pl.timer=0
   pl.jsy=0  pl.jvy=0  pl.jump_cd=0
   wobble=0  crowd_cd=150+flr(rnd(150))
+  smk={}  smoke_cd=90+flr(rnd(120))
   local nc=min(8+(level-1)*2,18)
   npc_spd_g=min(0.7+(level-1)*0.08,1.3)
   npc_cd_g=max(90-(level-1)*10,30)
@@ -1032,7 +1063,7 @@ function draw_demo()
     print("thousands of tomatoes",4,48,7)
     print("at each other. for fun.",4,56,7)
     print("you just want to get out.",4,68,7)
-    if demo_t==0 then print("press to enter the chaos",4,112,7) end
+    if demo_t==0 then print("press button to enter the chaos",4,112,7) end
     pal()
   end
   local p=demo_pl
@@ -1130,6 +1161,7 @@ function _update()
   tick_cd()
   crowd_cd-=1
   if crowd_cd<=0 then crowd_throw() crowd_cd=180+flr(rnd(120)) end
+  tick_smoke()
   update_entities()
   camera_scroll()
   if pl.x>1040 then
@@ -1184,6 +1216,7 @@ function init_boss()
   pl.state="idle"  pl.timer=0
   pl.jsy=0  pl.jvy=0  pl.jump_cd=0
   wobble=0  truck_hp=0  truck_blink=0  end_timer=0
+  smk={}
   srand(99+level*3)
   for i=1,28 do
     spawn_pickup(8+flr(rnd(110)),gnd_top+2+flr(rnd(gnd_bot-gnd_top-4)))
@@ -1240,6 +1273,11 @@ function update_boss()
       wobble=3
     else
       truck_x-=1.5
+      if boss_timer%4==0 then
+        for i=1,3 do
+          add(smk,{x=truck_x+100+rnd(20),y=74+rnd(10),dx=rnd(0.3)-0.1,dy=0.15,rad=3+rnd(3),act=60+flr(rnd(30)),clr=rnd({0,5,6})})
+        end
+      end
     end
     if truck_x<-65 then
       game_state="end"
@@ -1247,6 +1285,7 @@ function update_boss()
     end
   end
 
+  move_smoke()
   update_entities()
   pl.x=mid(pl.x,8,122)
   if pl.hp<=0 then
