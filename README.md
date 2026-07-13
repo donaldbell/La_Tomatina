@@ -16,6 +16,7 @@ Escapa de La Tomatina is a side-scrolling survival game built for the PICO-8 fan
 
 - **Source cart:** `tomatina.p8` — open in [PICO-8](https://www.lexaloffle.com/pico-8.php) to play the current version
 - **Web build:** browser-playable exports live in [`web-export/`](web-export/). `tomatina_v1.1.html` is the more recent snapshot; `tomatina_v1.html` is an earlier one. Download the matching `.html` and `.js` pair, then open the `.html` file locally. Both predate several features below — `tomatina.p8` is the up-to-date version.
+- **`.p8.png` cart:** [`web-export/tomatina_v1.1.p8.png`](web-export/tomatina_v1.1.p8.png) is a self-contained cart image — drag it into PICO-8 (or load it with `load`) to play the same v1.1 snapshot without a browser.
 
 ## Controls
 
