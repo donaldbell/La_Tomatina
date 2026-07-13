@@ -1,3 +1,5 @@
 *
 !tomatina.p8
 !.gitignore
+!web-export
+!web-export/**
