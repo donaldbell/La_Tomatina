@@ -117,7 +117,7 @@ pl.jump = function(e)
   if e.jsy>=0 then
     e.jsy=0 e.jvy=0
     e.state="idle" e.timer=0
-    e.jump_cd=12
+    e.jump_cd=4
   end
 end
 
