@@ -1095,12 +1095,11 @@ function draw_level_up()
 end
 
 function draw_gameover()
-  rectfill(20,40,107,88,0)
-  rect(21,41,106,87,8)
-  print("game over",37,50,8)
+  rectfill(20,48,107,80,0)
+  rect(21,49,106,79,8)
+  print("fin",58,56,8)
   local ss=flr(score/30)
-  print("survived: "..ss.."s",33,63,7)
-  if over_timer>90 then print("z/x to restart",29,76,5) end
+  print("duraste: "..ss.."s",38,69,7)
 end
 
 function draw_hud()
@@ -1151,6 +1150,7 @@ function _update()
   if game_state=="over" then
     over_timer+=1
     if (btnp(4) or btnp(5)) and over_timer>90 then _init() end
+    if over_timer>600 then _init() end
     return
   end
   if game_state=="level_up" then
